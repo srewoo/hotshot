@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Sticky header</title>
+<style>body{margin:0;font:14px system-ui}*{box-sizing:border-box}</style>
+</head><body>
+<header id="sticky" style="position:sticky;top:0;height:56px;background:#333;color:#fff;padding:16px">Header</header>
+<main style="height:1200px;padding:24px"><p id="body-text">Long page body</p></main>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[{"x":200,"y":20,"expect":"#sticky","why":"a sticky header is a normal target"}]</script>
+</body></html>

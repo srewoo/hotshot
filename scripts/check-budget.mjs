@@ -1,4 +1,4 @@
-import { statSync, readdirSync } from 'node:fs'
+import { statSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 /**
@@ -26,7 +26,26 @@ const sizeKb = (p) => {
   return total / 1024
 }
 
+/**
+ * The content script is injected as a CLASSIC script by executeScript. A
+ * top-level `import` there is a runtime SyntaxError that stops it loading at
+ * all — and it fails on the page, not in the build, so nothing else catches it.
+ */
 let failed = false
+
+const contentSource = readFileSync('dist/content.js', 'utf8')
+const moduleSyntax = [
+  [/(^|[;}\s])import\s*[{*'"(]/, 'import statement'],
+  [/(^|[;}\s])export\s/, 'export statement'],
+]
+for (const [pattern, label] of moduleSyntax) {
+  if (pattern.test(contentSource)) {
+    console.log(`FAIL content script contains a ${label} — executeScript injects a classic script, so it would not load`)
+    failed = true
+  }
+}
+if (!failed) console.log('ok   content script is a self-contained classic script')
+
 for (const { label, path, limitKb } of BUDGETS) {
   const actual = sizeKb(path)
   const pct = Math.round((actual / limitKb) * 100)

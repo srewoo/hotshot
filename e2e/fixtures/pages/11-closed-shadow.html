@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Closed shadow</title>
+<style>body{margin:0;font:14px system-ui}*{box-sizing:border-box}</style></head><body>
+<div style="padding:40px"><sealed-card id="sealed"></sealed-card></div>
+<script>
+  class SealedCard extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({mode:'closed'})
+      root.innerHTML = '<style>:host{display:block;width:280px;height:120px;border:1px solid #999}' +
+        '.inner{margin:20px;height:60px;background:#eee}</style><div class="inner"></div>'
+    }
+  }
+  customElements.define('sealed-card', SealedCard)
+</script>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[
+ {"x":120,"y":90,"expect":"#sealed","why":"a CLOSED root cannot be pierced by anyone, so the host is the honest answer"}
+]</script>
+</body></html>

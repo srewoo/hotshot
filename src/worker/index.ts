@@ -165,8 +165,33 @@ chrome.runtime.onInstalled.addListener((details) => {
   void chrome.tabs.create({ url: chrome.runtime.getURL('src/ui/onboarding/index.html') })
 })
 
+// Only fires when no popup is set. Kept as the fallback for a build that
+// removes `default_popup`, and harmless otherwise.
 chrome.action.onClicked.addListener((tab) => {
   void beginCapture('region', tab)
+})
+
+/**
+ * Capture requested from the popup.
+ *
+ * The popup closes the moment it is clicked, so this must resolve the tab
+ * itself rather than trusting a tab id the popup may not have been able to
+ * read — `tab.url` is unavailable without the `tabs` permission we do not
+ * request, and the same limitation applies to what the popup can pass on.
+ */
+chrome.runtime.onMessage.addListener((message: unknown) => {
+  const msg = message as { kind?: string; mode?: CaptureMode }
+  if (msg?.kind !== 'popup/capture') return undefined
+
+  const mode = msg.mode
+  if (mode !== 'region' && mode !== 'fullpage' && mode !== 'element') return undefined
+
+  void (async () => {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
+    if (tab) await beginCapture(mode, tab)
+  })()
+
+  return undefined
 })
 
 /** Destination routing (FR-13..FR-19). Tokens never leave the worker. */

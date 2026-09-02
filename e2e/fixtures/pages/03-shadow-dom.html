@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Shadow DOM</title>
+<style>body{margin:0;font:14px system-ui}*{box-sizing:border-box}</style>
+</head><body>
+<div style="padding:40px"><my-card id="host"></my-card></div>
+<script>
+  class MyCard extends HTMLElement {
+    connectedCallback() {
+      const root = this.attachShadow({mode:'open'})
+      root.innerHTML = '<style>:host{display:block;width:300px;border:1px solid #999;padding:20px}' +
+        '.inner{height:60px;background:#eee}</style><div class="inner" id="inner">shadow content</div>'
+    }
+  }
+  customElements.define('my-card', MyCard)
+</script>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[{"x":120,"y":80,"expect":"shadow:#host >>> .inner","why":"the shadow child is pickable by its own bounds"}]</script>
+</body></html>

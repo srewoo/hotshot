@@ -30,10 +30,12 @@ export function Popup() {
     })()
   }, [])
 
-  async function capture(mode: CaptureMode) {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-    if (tab?.id === undefined) return
-    await chrome.runtime.sendMessage({ kind: 'popup/capture', mode, tabId: tab.id })
+  function capture(mode: CaptureMode) {
+    // Deliberately NOT awaited. The worker sends no reply, so awaiting would
+    // hang on a closed message port and the popup would never close — leaving
+    // it open over the very page being captured.
+    void chrome.runtime.sendMessage({ kind: 'popup/capture', mode })
+    // The overlay cannot appear until the popup is gone; it steals focus.
     window.close()
   }
 
@@ -56,7 +58,7 @@ export function Popup() {
             <button
               key={mode}
               class="row"
-              onClick={() => void capture(mode)}
+              onClick={() => capture(mode)}
               style={{
                 width: '100%', background: 'none', border: 0,
                 borderBottom: '1px solid var(--hs-border)', borderRadius: 0,

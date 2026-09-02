@@ -16,7 +16,23 @@ export interface Restriction {
 
 const BROWSER_SCHEMES = ['chrome:', 'edge:', 'brave:', 'about:', 'devtools:', 'view-source:']
 
-const MESSAGES: Record<RestrictionKind, string> = {
+/** Message key per restriction, resolved through chrome.i18n at runtime. */
+const MESSAGE_KEYS: Record<RestrictionKind, string> = {
+  'browser-page': 'restrictedBrowserPage',
+  'web-store': 'restrictedWebStore',
+  'extension-page': 'restrictedExtensionPage',
+  pdf: 'restrictedPdf',
+  unknown: 'restrictedUnknown',
+}
+
+/**
+ * English fallbacks, kept in code as well as in `_locales`.
+ *
+ * `chrome.i18n` is unavailable in a plain unit-test environment, and a
+ * restriction that renders as an empty string would be exactly the silent
+ * failure FR-30 exists to prevent — so the copy must survive its absence.
+ */
+const FALLBACKS: Record<RestrictionKind, string> = {
   'browser-page':
     'Chrome does not allow extensions to run on its own pages, so Hotshot cannot capture this one. Switch to a normal web page and try again.',
   'web-store':
@@ -28,7 +44,15 @@ const MESSAGES: Record<RestrictionKind, string> = {
     'Hotshot cannot read this tab’s address, so it cannot tell whether capturing here is allowed. Reload the page and try again.',
 }
 
-const restriction = (kind: RestrictionKind): Restriction => ({ kind, message: MESSAGES[kind] })
+function messageFor(kind: RestrictionKind): string {
+  const localised = globalThis.chrome?.i18n?.getMessage?.(MESSAGE_KEYS[kind])
+  return localised && localised.length > 0 ? localised : FALLBACKS[kind]
+}
+
+const restriction = (kind: RestrictionKind): Restriction => ({
+  kind,
+  message: messageFor(kind),
+})
 
 export function restrictionFor(url: string | undefined): Restriction | null {
   // `tab.url` is undefined when the extension has no permission to read it.

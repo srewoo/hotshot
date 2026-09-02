@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Full bleed</title>
+<style>body{margin:0;font:14px system-ui}*{box-sizing:border-box}</style>
+</head><body>
+<div id="wrapper" style="width:100vw;height:100vh;padding:40px">
+  <section id="panel" style="width:400px;height:200px;border:1px solid #999;padding:16px">Panel</section>
+</div>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[{"x":200,"y":120,"expect":"#panel","why":"a viewport-sized wrapper is never the intent"}]</script>
+</body></html>

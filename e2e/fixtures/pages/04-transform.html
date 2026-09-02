@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Transformed</title>
+<style>body{margin:0;font:14px system-ui}*{box-sizing:border-box}</style>
+</head><body>
+<div style="padding:60px">
+  <div id="rotated" style="width:200px;height:100px;background:#ddd;transform:rotate(12deg) scale(1.2)">
+    <span id="inside">rotated</span>
+  </div>
+</div>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[{"x":140,"y":110,"expect":"#rotated","why":"a transformed box reports its VISUAL bounds"}]</script>
+</body></html>

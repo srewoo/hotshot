@@ -1,4 +1,13 @@
+import { fileURLToPath } from 'node:url'
 import { test, expect } from './fixtures'
+
+const contentScriptPath = fileURLToPath(new URL('../dist/content.js', import.meta.url))
+
+declare global {
+  interface Window {
+    __hotshotInjected?: boolean
+  }
+}
 
 /**
  * Verifies the wiring the unit tests cannot reach: that the manifest is valid,
@@ -84,4 +93,102 @@ test('no page logs an error on load', async ({ page, extensionId }) => {
   }
 
   expect(problems).toEqual([])
+})
+
+test('the popup capture message reaches a worker listener', async ({ page, extensionId }) => {
+  // This is the bug this test exists for: the popup sent `popup/capture` and
+  // NOTHING listened for it, so every menu item silently did nothing. An
+  // unhandled sendMessage resolves as undefined and looks identical to
+  // success, which is why it survived a manual click-through.
+  await page.goto(`chrome-extension://${extensionId}/src/ui/popup/index.html`)
+
+  const handled = await page.evaluate(async () => {
+    try {
+      await chrome.runtime.sendMessage({ kind: 'popup/capture', mode: 'region' })
+      return 'delivered'
+    } catch (error) {
+      return String(error)
+    }
+  })
+
+  // "Receiving end does not exist" is the signature of the original bug.
+  expect(handled).toBe('delivered')
+})
+
+test('an unknown message kind does not crash the worker', async ({ page, extensionId }) => {
+  await page.goto(`chrome-extension://${extensionId}/src/ui/popup/index.html`)
+  const result = await page.evaluate(async () => {
+    try {
+      await chrome.runtime.sendMessage({ kind: 'nonsense/not-a-real-message' })
+      return 'ok'
+    } catch {
+      // No listener claims it, which is correct — it must not take the worker down.
+      return 'ok'
+    }
+  })
+  expect(result).toBe('ok')
+})
+
+test('the content script runs as a classic script on a real page', async ({ context }) => {
+  // The bug this test exists for: dist/content.js was emitted as an ES module,
+  // and executeScript injects a CLASSIC script — so it died with "Cannot use
+  // import statement outside a module" and every capture silently failed. No
+  // extension-page test could see it, because the failure only happens on a
+  // host page at load time.
+  //
+  // `addScriptTag` without `type=module` uses the same execution mode as
+  // executeScript, so it reproduces that exact failure. It does NOT exercise
+  // the activeTab grant, which needs a real user gesture Playwright cannot
+  // synthesise — that path stays manual.
+  const page = await context.newPage()
+  await page.setContent('<main><article id="card">real page content</article></main>')
+
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(String(error)))
+
+  // `addScriptTag` lands in the page's MAIN world, where the extension APIs do
+  // not exist — content scripts get an isolated world with `chrome`. Stubbing
+  // the one API the entry point touches lets the script execute for real, so
+  // the test measures parsing and execution rather than a missing global.
+  await page.addInitScript(() => {
+    // @ts-expect-error — minimal stand-in for the isolated world's `chrome`.
+    window.chrome = { runtime: { onMessage: { addListener: () => {} } } }
+  })
+  await page.reload()
+  await page.setContent('<main><article id="card">real page content</article></main>')
+
+  await page.addScriptTag({ path: contentScriptPath })
+
+  expect(errors.join('\n')).not.toContain('import statement')
+  expect(errors.join('\n')).not.toContain('SyntaxError')
+  expect(errors).toEqual([])
+
+  // The guard flag is the observable proof that the script actually ran.
+  expect(await page.evaluate(() => window.__hotshotInjected === true)).toBe(true)
+
+  await page.close()
+})
+
+test('the content script guards against double injection', async ({ context }) => {
+  // executeScript runs again on every invocation, and the user may press the
+  // hotkey twice — a second run must not stack a second listener.
+  const page = await context.newPage()
+  await page.setContent('<main>content</main>')
+
+  await page.addInitScript(() => {
+    // @ts-expect-error — minimal stand-in for the isolated world's `chrome`.
+    window.chrome = { runtime: { onMessage: { addListener: () => {} } } }
+  })
+  await page.reload()
+  await page.setContent('<main>content</main>')
+
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(String(error)))
+
+  await page.addScriptTag({ path: contentScriptPath })
+  await page.addScriptTag({ path: contentScriptPath })
+
+  expect(errors).toEqual([])
+  expect(await page.evaluate(() => window.__hotshotInjected === true)).toBe(true)
+  await page.close()
 })

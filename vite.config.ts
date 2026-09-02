@@ -21,17 +21,16 @@ export default defineConfig({
       // host permission FR-23 refuses. It therefore needs its own entry with
       // a STABLE filename for `executeScript` to reference.
       input: {
-        content: fileURLToPath(new URL('./src/content/index.ts', import.meta.url)),
+        // NOTE: the content script is NOT built here. It must be a classic,
+        // self-contained script (see scripts/build-content.mjs), and rollup
+        // would code-split it into ES modules that executeScript cannot load.
         // The offscreen document is loaded by the extension at runtime, so it
         // is not reachable from the manifest graph and needs an explicit entry.
         offscreen: fileURLToPath(new URL('./src/offscreen/index.html', import.meta.url)),
         library: fileURLToPath(new URL('./src/ui/library/index.html', import.meta.url)),
         onboarding: fileURLToPath(new URL('./src/ui/onboarding/index.html', import.meta.url)),
       },
-      output: {
-        entryFileNames: (chunk) =>
-          chunk.name === 'content' ? 'content.js' : 'assets/[name]-[hash].js',
-      },
+      output: { entryFileNames: 'assets/[name]-[hash].js' },
     },
   },
 })

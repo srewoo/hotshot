@@ -15,11 +15,13 @@ import pkg from '../package.json'
  */
 const manifest: ManifestV3Export = {
   manifest_version: 3,
-  name: 'Hotshot',
+  // i18n: Chrome substitutes these from _locales/<lang>/messages.json.
+  name: '__MSG_extName__',
   // Single-sourced from package.json so the two can never disagree.
   version: pkg.version,
-  description: 'Exact screenshots of anything on a page. Nothing leaves your machine.',
+  description: '__MSG_extDescription__',
   minimum_chrome_version: '116',
+  default_locale: 'en',
 
   // `notifications` backs FR-30's second layer: a keyboard-triggered command
   // does not open the popup, so on a restricted page the badge and a
@@ -40,7 +42,7 @@ const manifest: ManifestV3Export = {
 
   background: { service_worker: 'src/worker/index.ts', type: 'module' },
   action: {
-    default_title: 'Hotshot',
+    default_title: '__MSG_extName__',
     default_icon: { 16: 'icons/16.png', 32: 'icons/32.png' },
     default_popup: 'src/ui/popup/index.html',
   },
@@ -51,19 +53,19 @@ const manifest: ManifestV3Export = {
   commands: {
     'capture-region': {
       suggested_key: { default: 'Ctrl+Shift+1', mac: 'Command+Shift+1' },
-      description: 'Capture a region',
+      description: '__MSG_cmdRegion__',
     },
     'capture-fullpage': {
       suggested_key: { default: 'Ctrl+Shift+2', mac: 'Command+Shift+2' },
-      description: 'Capture the full page',
+      description: '__MSG_cmdFullPage__',
     },
     'capture-element': {
       suggested_key: { default: 'Ctrl+Shift+3', mac: 'Command+Shift+3' },
-      description: 'Capture an element',
+      description: '__MSG_cmdElement__',
     },
     'capture-last': {
       suggested_key: { default: 'Ctrl+Shift+4', mac: 'Command+Shift+4' },
-      description: 'Capture using the last mode',
+      description: '__MSG_cmdLast__',
     },
   },
 

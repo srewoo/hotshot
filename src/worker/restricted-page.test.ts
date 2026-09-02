@@ -67,3 +67,37 @@ describe('restrictionFor', () => {
     expect(r?.message).toMatch(/Chrome|browser/i)
   })
 })
+
+describe('localisation', () => {
+  test('falls back to English when chrome.i18n is unavailable', () => {
+    // Unit tests run without the extension runtime. A restriction that
+    // rendered as an empty string here would be the silent failure FR-30
+    // exists to prevent, so the fallback is load-bearing, not decorative.
+    expect(globalThis.chrome).toBeUndefined()
+    expect(restrictionFor('chrome://settings/')?.message.length).toBeGreaterThan(20)
+  })
+
+  test('prefers a localised string when the runtime provides one', () => {
+    const original = globalThis.chrome
+    // @ts-expect-error — minimal stub of the runtime surface under test.
+    globalThis.chrome = { i18n: { getMessage: () => 'Localised copy for this page.' } }
+    try {
+      expect(restrictionFor('chrome://settings/')?.message).toBe('Localised copy for this page.')
+    } finally {
+      globalThis.chrome = original
+    }
+  })
+
+  test('ignores an empty localised string rather than showing nothing', () => {
+    const original = globalThis.chrome
+    // A missing key returns "" from chrome.i18n — showing that would be worse
+    // than showing untranslated English.
+    // @ts-expect-error — minimal stub.
+    globalThis.chrome = { i18n: { getMessage: () => '' } }
+    try {
+      expect(restrictionFor('chrome://settings/')?.message.length).toBeGreaterThan(20)
+    } finally {
+      globalThis.chrome = original
+    }
+  })
+})

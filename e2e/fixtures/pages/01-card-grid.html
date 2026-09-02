@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Card grid</title>
+<style>body{margin:0;font:14px system-ui}*{box-sizing:border-box}</style>
+</head><body>
+<main style="padding:24px;display:grid;grid-template-columns:repeat(3,240px);gap:16px">
+  <article id="card-a" style="border:1px solid #ccc;padding:16px;height:160px">
+    <h2 style="margin:0 0 8px">Card A</h2><p id="para-a" style="margin:0">Body text</p>
+  </article>
+  <article id="card-b" style="border:1px solid #ccc;padding:16px;height:160px">
+    <button id="btn-b" style="padding:8px 12px">Action</button>
+  </article>
+</main>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[
+ {"x":140,"y":80,"expect":"#para-a","why":"a paragraph is a real element, so hovering it picks it"},
+ {"x":140,"y":80,"walk":1,"expectTag":"article","why":"] walks out from the paragraph to the card"},
+ {"x":140,"y":40,"expect":"#card-a","why":"hovering the card padding picks the card itself"},
+ {"x":320,"y":58,"expect":"#btn-b","why":"a real button is the intent, not its card"},
+ {"x":460,"y":150,"expect":"#card-b","why":"card padding, away from the button, picks the card"}
+]</script>
+</body></html>

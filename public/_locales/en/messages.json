@@ -1,0 +1,34 @@
+{
+  "extName":        { "message": "Hotshot", "description": "Extension name" },
+  "extDescription": { "message": "Exact screenshots of anything on a page. Nothing leaves your machine.", "description": "Store listing short description" },
+
+  "cmdRegion":   { "message": "Capture a region" },
+  "cmdFullPage": { "message": "Capture the full page" },
+  "cmdElement":  { "message": "Capture an element" },
+  "cmdLast":     { "message": "Capture using the last mode" },
+
+  "restrictedBrowserPage": {
+    "message": "Chrome does not allow extensions to run on its own pages, so Hotshot cannot capture this one. Switch to a normal web page and try again.",
+    "description": "Shown for chrome://, about:, devtools: and view-source: URLs"
+  },
+  "restrictedWebStore": {
+    "message": "Chrome blocks all extensions on the Web Store, so Hotshot cannot capture this page. Your browser’s built-in screenshot shortcut still works here."
+  },
+  "restrictedExtensionPage": {
+    "message": "This is another extension’s page, and Chrome keeps extensions out of each other’s pages. Hotshot cannot capture it."
+  },
+  "restrictedPdf": {
+    "message": "This is Chrome’s built-in PDF viewer, which extensions cannot read. Download the PDF and open it in a PDF app to capture from it."
+  },
+  "restrictedUnknown": {
+    "message": "Hotshot cannot read this tab’s address, so it cannot tell whether capturing here is allowed. Reload the page and try again."
+  },
+
+  "hintRegion":  { "message": "drag to select · esc cancel" },
+  "hintElement": { "message": "hover an element · [ ] to adjust · click to capture · esc cancel" },
+
+  "notionNotShared": {
+    "message": "Notion cannot see that page. Open it, choose ••• → Connections, and invite the Hotshot integration — then try again.",
+    "description": "Notion 404. The single most valuable error message in the product: the page exists, the integration simply was not invited."
+  }
+}

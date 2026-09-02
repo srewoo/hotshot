@@ -7,13 +7,15 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && node scripts/build-content.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "check:budget": "node scripts/check-budget.mjs",
-    "verify": "npm run typecheck && npm run test && vite build && npm run check:budget && npm run test:e2e",
-    "test:e2e": "playwright test"
+    "verify": "npm run typecheck && npm run test && vite build && node scripts/build-content.mjs && npm run check:budget && npm run test:e2e",
+    "test:e2e": "node scripts/build-harness.mjs && playwright test",
+    "package": "npm run build && npm run check:budget && node scripts/package.mjs",
+    "package:only": "node scripts/package.mjs"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.23",
