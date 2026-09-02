@@ -2,6 +2,7 @@ import { restrictionFor } from './restricted-page'
 import { captureFullPage } from './fullpage'
 import { createHistoryRepo } from '../storage/history-repo'
 import { idbHistoryStore } from '../storage/idb-history'
+import { handleShip, listDestinations, type ShipRequest } from './destinations'
 import type { CaptureMode } from '../shared/messaging/protocol'
 
 /**
@@ -157,6 +158,29 @@ chrome.runtime.onInstalled.addListener((details) => {
 
 chrome.action.onClicked.addListener((tab) => {
   void beginCapture('region', tab)
+})
+
+/** Destination routing (FR-13..FR-19). Tokens never leave the worker. */
+chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+  const kind = (message as { kind?: string })?.kind
+  if (kind !== 'destinations/list' && kind !== 'destinations/ship') return undefined
+
+  void (async () => {
+    try {
+      if (kind === 'destinations/list') {
+        sendResponse(await listDestinations())
+        return
+      }
+      sendResponse(await handleShip(message as ShipRequest))
+    } catch (error) {
+      sendResponse({
+        ok: false,
+        message: error instanceof Error ? error.message : 'The send failed unexpectedly.',
+      })
+    }
+  })()
+
+  return true
 })
 
 /**

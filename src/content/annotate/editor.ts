@@ -6,6 +6,9 @@ import { TOKENS } from '../overlay/overlay-chrome'
 import { writeImageToClipboard, browserClipboard } from '../clipboard'
 import { isErr } from '../../shared/result'
 import type { DeviceRect } from '../../shared/geometry/device-rect'
+import { mountDestinations } from './destinations-mount'
+import { shipToDestination } from './ship-request'
+import type { ProviderId } from '../../storage/token-repo'
 
 /**
  * The in-page annotation editor (PRD FR-7, DESIGN §3.3).
@@ -16,8 +19,8 @@ import type { DeviceRect } from '../../shared/geometry/device-rect'
  */
 
 export interface EditorResult {
-  readonly action: 'copy' | 'download' | 'pin' | 'cancel'
-  readonly blob?: Blob
+  readonly action: 'copy' | 'download' | 'pin' | 'shipped' | 'cancel'
+  readonly blob?: Blob | undefined
 }
 
 export async function openEditor(
@@ -246,6 +249,23 @@ export async function openEditor(
     }
   }
 
+  const destinations = await mountDestinations(root, {
+    onSend: (id, key) => void send(id, key),
+  })
+
+  async function send(id: ProviderId, key: string): Promise<void> {
+    destinations.setStatus('Sending…', 'busy')
+    const blob = await toBlob()
+    const response = await shipToDestination(id, key, blob)
+    if (!response.ok) {
+      // The capture stays on screen so a failed ship never loses work (FR-32).
+      destinations.setStatus(response.message, 'error')
+      return
+    }
+    destinations.setStatus('Sent', 'ok')
+    setTimeout(() => onDone({ action: 'shipped' }), 700)
+  }
+
   window.addEventListener('keydown', onKey, true)
 
   stage.append(canvas)
@@ -253,10 +273,14 @@ export async function openEditor(
   repaint()
 
   requestAnimationFrame(() => {
-    toolbar.position(canvas.getBoundingClientRect(), {
-      width: window.innerWidth,
-      height: window.innerHeight,
-    })
+    const box = canvas.getBoundingClientRect()
+    const viewport = { width: window.innerWidth, height: window.innerHeight }
+    toolbar.position(box, viewport)
+
+    // The destination strip sits under the toolbar, never over the capture.
+    const toolbarBox = toolbar.element.getBoundingClientRect()
+    destinations.element.style.left = `${toolbarBox.left}px`
+    destinations.element.style.top = `${Math.min(toolbarBox.bottom + 8, viewport.height - 48)}px`
   })
 
   void cssWidth
