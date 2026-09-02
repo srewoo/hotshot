@@ -1,5 +1,5 @@
 import { restrictionFor } from './restricted-page'
-import { captureFullPage } from './fullpage'
+import { captureFullPage, requestStitchCancel } from './fullpage'
 import { createHistoryRepo } from '../storage/history-repo'
 import { idbHistoryStore } from '../storage/idb-history'
 import { handleShip, listDestinations, type ShipRequest } from './destinations'
@@ -100,11 +100,20 @@ async function beginCapture(mode: CaptureMode, tab: chrome.tabs.Tab): Promise<vo
   if (mode === 'fullpage') {
     const windowId = tab.windowId
     try {
-      const dataUrl = await captureFullPage(tabId, windowId, ({ captured, total }) => {
-        void chrome.action.setBadgeText({ tabId, text: `${captured}/${total}` })
-      })
+      const { dataUrl, partialWarning } = await captureFullPage(
+        tabId,
+        windowId,
+        ({ captured, total }) => {
+          void chrome.action.setBadgeText({ tabId, text: `${captured}/${total}` })
+        },
+      )
       await chrome.action.setBadgeText({ tabId, text: '' })
       await deliverFullPage(tabId, dataUrl)
+      if (partialWarning) {
+        // A partial delivery is a normal outcome, but the user must be told
+        // it is partial — a silently short screenshot is a wrong screenshot.
+        await reportRestriction(tabId, `Full-page capture stopped early — ${partialWarning}.`)
+      }
     } catch (error) {
       await chrome.action.setBadgeText({ tabId, text: '' })
       await reportRestriction(
@@ -163,6 +172,10 @@ chrome.action.onClicked.addListener((tab) => {
 /** Destination routing (FR-13..FR-19). Tokens never leave the worker. */
 chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
   const kind = (message as { kind?: string })?.kind
+  if (kind === 'stitch/cancel') {
+    requestStitchCancel()
+    return undefined
+  }
   if (kind !== 'destinations/list' && kind !== 'destinations/ship') return undefined
 
   void (async () => {

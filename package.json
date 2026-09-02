@@ -12,10 +12,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "check:budget": "node scripts/check-budget.mjs",
-    "verify": "npm run typecheck && npm run test && vite build && npm run check:budget"
+    "verify": "npm run typecheck && npm run test && vite build && npm run check:budget && npm run test:e2e",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@crxjs/vite-plugin": "^2.0.0-beta.23",
+    "@playwright/test": "^1.62.1",
     "@types/chrome": "^0.0.268",
     "@types/node": "^22.20.1",
     "happy-dom": "^20.12.2",

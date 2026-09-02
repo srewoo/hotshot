@@ -19,9 +19,14 @@ export function Popup() {
   useEffect(() => {
     void (async () => {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true })
-      // FR-30's third layer. The badge and notification already fired; this
-      // is the surface that can afford to explain properly.
-      setBlocked(restrictionFor(tab?.url)?.message ?? null)
+
+      // `tab.url` is only populated with the `tabs` permission, which Hotshot
+      // deliberately does not request — it carries a "read your browsing
+      // history" warning at install and the privacy claim is worth more than
+      // this convenience. So an ABSENT url means "cannot tell", and the modes
+      // stay available; the worker reports a real restriction on the badge and
+      // in a notification when the capture is actually attempted (FR-30).
+      setBlocked(tab?.url ? (restrictionFor(tab.url)?.message ?? null) : null)
     })()
   }, [])
 

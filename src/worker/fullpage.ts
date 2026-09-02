@@ -1,4 +1,5 @@
 import { CAPTURE_INTERVAL_MS, planTiles, progressFrom, SETTLE_MS } from '../offscreen/tile-plan'
+import { createStitchSession } from '../offscreen/stitch-state'
 
 /**
  * Full-page capture orchestration (PRD FR-2, FR-31).
@@ -88,14 +89,29 @@ async function unfreeze(tabId: number): Promise<void> {
 
 const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+/** Set by the worker when the user presses Esc during a stitch. */
+let cancelRequested = false
+
+export function requestStitchCancel(): void {
+  cancelRequested = true
+}
+
+export interface FullPageResult {
+  readonly dataUrl: string
+  /** Non-null when the stitch was cut short and delivered partially. */
+  readonly partialWarning: string | null
+}
+
 export async function captureFullPage(
   tabId: number,
   windowId: number,
   onProgress: (progress: StitchProgress) => void,
-): Promise<string> {
+): Promise<FullPageResult> {
   const geometry = await readGeometry(tabId)
   const tiles = planTiles(geometry)
+  const session = createStitchSession(tiles.length)
   const startedAt = Date.now()
+  cancelRequested = false
 
   await ensureOffscreen()
 
@@ -113,12 +129,28 @@ export async function captureFullPage(
 
   try {
     for (const [index, tile] of tiles.entries()) {
+      // Esc stops and KEEPS what has been captured (FR-31).
+      if (cancelRequested) {
+        session.cancel()
+        break
+      }
+      if (!session.running()) break
+
       await positionForTile(tabId, tile.scrollY, index === 0)
 
       // The settle runs inside the throttle gap, not in addition to it.
       await wait(index === 0 ? SETTLE_MS : Math.max(SETTLE_MS, CAPTURE_INTERVAL_MS - 120))
 
-      const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' })
+      let dataUrl: string
+      try {
+        dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'png' })
+      } catch {
+        // Chrome refused the capture, almost always the per-second quota.
+        // Deliver what we have rather than losing a long stitch (FR-31).
+        session.quotaExhausted()
+        break
+      }
+
       const added = await send({
         kind: 'stitch/tile',
         dataUrl,
@@ -126,6 +158,7 @@ export async function captureFullPage(
       })
       if (!added.ok) throw new Error(added.error ?? 'A tile could not be added.')
 
+      session.tileDone()
       onProgress(
         progressFrom({
           captured: index + 1,
@@ -135,11 +168,15 @@ export async function captureFullPage(
       )
     }
 
+    if (!session.shouldDeliver()) {
+      throw new Error('The capture was cancelled before anything was captured.')
+    }
+
     const finished = await send({ kind: 'stitch/finish' })
     if (!finished.ok || !finished.dataUrl) {
       throw new Error(finished.error ?? 'The stitched image could not be encoded.')
     }
-    return finished.dataUrl
+    return { dataUrl: finished.dataUrl, partialWarning: session.summary() }
   } finally {
     // Always restore the page, even on failure: leaving a page with every
     // element forced to `position: static` would look like we broke the site.
