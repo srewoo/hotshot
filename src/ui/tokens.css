@@ -1,0 +1,102 @@
+/* DESIGN §2 — the token set, single-sourced for every extension page. */
+:root {
+  --hs-g-0: #ffffff;
+  --hs-g-25: #f7f7f5;
+  --hs-g-50: #efeeea;
+  --hs-g-100: #e3e1dc;
+  --hs-g-200: #d0cdc6;
+  --hs-g-300: #b2aea5;
+  --hs-g-400: #8c8880;
+  --hs-g-500: #6b6862;
+  --hs-g-600: #514f4a;
+  --hs-g-700: #3a3936;
+  --hs-g-800: #262524;
+  --hs-g-900: #171716;
+  --hs-g-950: #0e0e0d;
+  --hs-g-1000: #060605;
+
+  --hs-flare: #ff5a00;
+  --hs-flare-ink: #d93e00;
+  --hs-ok: #3fa46a;
+  --hs-warn: #d9a400;
+  --hs-err: #c4321e;
+
+  --hs-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --hs-sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  --hs-r-1: 3px;
+  --hs-r-2: 5px;
+
+  --hs-surface: var(--hs-g-0);
+  --hs-ink: var(--hs-g-900);
+  --hs-ink-dim: var(--hs-g-500);
+  --hs-border: var(--hs-g-100);
+  --hs-raised: var(--hs-g-25);
+}
+
+/* The overlay sits on unknown pixels; these pages sit in the browser, so they
+   follow the viewer's theme rather than committing to one. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --hs-surface: var(--hs-g-950);
+    --hs-ink: var(--hs-g-25);
+    --hs-ink-dim: var(--hs-g-400);
+    --hs-border: var(--hs-g-700);
+    --hs-raised: var(--hs-g-900);
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 400 13px/1.45 var(--hs-sans);
+  color: var(--hs-ink);
+  background: var(--hs-surface);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numbers are the product — always mono, always tabular. */
+.num { font-family: var(--hs-mono); font-variant-numeric: tabular-nums; }
+
+h1 { font-size: 15px; font-weight: 600; margin: 0 0 2px; letter-spacing: -0.01em; }
+h2 { font-size: 11px; font-weight: 600; margin: 0 0 8px;
+     text-transform: uppercase; letter-spacing: 0.08em; color: var(--hs-ink-dim); }
+p  { margin: 0 0 10px; color: var(--hs-ink-dim); }
+
+/* Hairline borders carrying real hierarchy, never uniform 2px black. */
+.row {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--hs-border);
+}
+.row:last-child { border-bottom: 0; }
+
+button {
+  font: 500 12px/1 var(--hs-sans);
+  color: var(--hs-ink); background: var(--hs-raised);
+  border: 1px solid var(--hs-border); border-radius: var(--hs-r-1);
+  padding: 7px 11px; cursor: pointer;
+}
+button:hover { border-color: var(--hs-g-300); }
+button.primary { background: var(--hs-flare); border-color: var(--hs-flare); color: #fff; }
+button:focus-visible { outline: 2px solid var(--hs-flare); outline-offset: 2px; }
+
+input, select {
+  font: 400 12px/1 var(--hs-sans);
+  color: var(--hs-ink); background: var(--hs-surface);
+  border: 1px solid var(--hs-border); border-radius: var(--hs-r-1);
+  padding: 7px 9px; min-width: 0;
+}
+input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--hs-flare); outline-offset: 1px; border-color: transparent;
+}
+input.mono { font-family: var(--hs-mono); }
+
+kbd {
+  font: 500 10px/1 var(--hs-mono);
+  border: 1px solid var(--hs-border); border-bottom-width: 2px;
+  border-radius: var(--hs-r-1); padding: 3px 5px; color: var(--hs-ink-dim);
+}
+.dim { color: var(--hs-ink-dim); }
+.err { color: var(--hs-err); }
+.ok  { color: var(--hs-ok); }

@@ -1,0 +1,30 @@
+{
+  "name": "hotshot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Exact screenshots of anything on a page. Nothing leaves your machine.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:budget": "node scripts/check-budget.mjs",
+    "verify": "npm run typecheck && npm run test && vite build && npm run check:budget"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0-beta.23",
+    "@types/chrome": "^0.0.268",
+    "@types/node": "^22.20.1",
+    "happy-dom": "^20.12.2",
+    "typescript": "^5.5.4",
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
+  },
+  "dependencies": {
+    "preact": "^10.29.8",
+    "zod": "^3.23.8"
+  }
+}
