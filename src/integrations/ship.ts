@@ -17,6 +17,7 @@ import { renderFilename } from '../storage/filename'
 export interface ShipDeps {
   readonly provider: IntegrationProvider
   readonly settings: Settings
+  readonly linkContext?: DeepLinkContext
   rememberTarget(id: ProviderId, target: TargetRef): Promise<void>
   lastTarget(id: ProviderId): Promise<TargetRef | null>
 }
@@ -32,10 +33,45 @@ export interface ShipFailure {
   readonly message: string
 }
 
-const DEEP_LINK: Record<ProviderId, (key: string) => string> = {
-  jira: (key) => `Issue ${key}`,
-  notion: (key) => `Notion page ${key}`,
-  clickup: (key) => `https://app.clickup.com/t/${key}`,
+/**
+ * The share link, without a backend.
+ *
+ * Hotshot hosts nothing, so it cannot mint a URL of its own. It does not need
+ * to: once a capture is attached, the DESTINATION is the host — a Jira issue,
+ * a Notion page, a ClickUp task are all URLs the recipient can already open,
+ * on a service they already trust and are already authenticated to.
+ */
+export interface DeepLinkContext {
+  /** Explicitly `| undefined`: the site is genuinely unknown until Jira is configured. */
+  readonly jiraSite?: string | undefined
+}
+
+function deepLink(id: ProviderId, key: string, context: DeepLinkContext): string {
+  switch (id) {
+    case 'jira':
+      // Without the site we cannot build a URL, so return the key rather than
+      // a plausible-looking link that goes nowhere.
+      return context.jiraSite ? `https://${context.jiraSite}/browse/${key}` : key
+    case 'clickup':
+      return `https://app.clickup.com/t/${key}`
+    case 'notion':
+      // Notion page URLs are the id with dashes stripped.
+      return `https://www.notion.so/${key.replaceAll('-', '')}`
+    case 'linear':
+      // The id is a UUID, and Linear resolves `/issue/<id>` from it.
+      return `https://linear.app/issue/${key}`
+    case 'trello':
+      return `https://trello.com/c/${key}`
+    case 'asana':
+      return `https://app.asana.com/0/0/${key}`
+    case 'slack':
+    case 'dropbox':
+      // Neither gives a link a recipient can open from what an upload
+      // returns — Slack's permalink needs another call, and a Dropbox share
+      // link needs a scope this token may not have. Returning the key is
+      // honest; a plausible-looking URL that 404s is not.
+      return key
+  }
 }
 
 export async function shipCapture(
@@ -67,7 +103,13 @@ export async function shipCapture(
     sequence: 1,
   })
 
-  const attached = await deps.provider.attachImage(resolved, blob, filename)
+  // The suffix follows the BYTES: a capture compressed to JPEG to fit an
+  // attachment limit must not be uploaded named `.png`, which is how a service
+  // ends up refusing or mis-rendering a perfectly good image.
+  const named =
+    blob.type === 'image/jpeg' ? filename.replace(/\.png$/i, '.jpg') : filename
+
+  const attached = await deps.provider.attachImage(resolved, blob, named)
   if (isErr(attached)) {
     // The connectors already write plain-language messages — Notion's 404 in
     // particular. Rewrapping them here would throw away the useful wording.
@@ -79,7 +121,7 @@ export async function shipCapture(
   await deps.rememberTarget(id, resolved)
 
   return ok({
-    url: DEEP_LINK[id](resolved.key),
+    url: deepLink(id, resolved.key, deps.linkContext ?? {}),
     context: buildAutoContext(facts, deps.settings.autoContext),
   })
 }

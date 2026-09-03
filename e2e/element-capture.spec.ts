@@ -94,6 +94,6 @@ test.describe('element picker fixture suite', () => {
 
   test('every fixture is reachable and none is silently empty', async () => {
     // A fixture that stops loading would otherwise pass by asserting nothing.
-    expect(pages.length).toBeGreaterThanOrEqual(10)
+    expect(pages.length).toBeGreaterThanOrEqual(20)
   })
 })

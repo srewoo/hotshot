@@ -1,18 +1,18 @@
-import { clampToViewport, moveBy, rectFromDrag, resizeBy, type Handle, type Point } from './selection-rect'
+import { clampToViewport } from './selection-rect'
 import { adjustSelection } from './selection-keys'
-import { handleAtPoint } from './handle-hit'
+import { createRegionGestures } from './region-gestures'
+import { overlayKeyIntent } from './overlay-keys'
 import { buildHandles } from './handles-view'
 import { buildLoupe } from './loupe-view'
 import { buildDimensionRules } from './dimension-rule'
 import { HOTSHOT_HOST_ATTRIBUTE } from './element-chain'
 import { createElementMode } from './element-mode'
-import { toDeviceRect, type CssRect } from '../../shared/geometry/device-rect'
-import { requestBackdrop } from './backdrop-request'
-import { cropToBitmap } from './crop'
-import { handoffToEditor } from './editor-handoff'
+import type { CssRect } from '../../shared/geometry/device-rect'
+import { commitSelection } from './commit-selection'
+import { startPhaseTwo } from './phase-two'
+import { bandFor, needsScrollCapture, reportedSize } from './element-band-request'
 import type { CaptureMode } from '../../shared/messaging/protocol'
-import { buildChrome, TOKENS } from './overlay-chrome'
-import { coverAll, frameSelection } from './veil-view'
+import { buildChrome, paintSelection } from './overlay-chrome'
 
 /**
  * The capture overlay (DESIGN §3.1).
@@ -30,22 +30,20 @@ interface OverlaySession {
 
 let active: OverlaySession | null = null
 
-export async function mountOverlay(mode: CaptureMode): Promise<void> {
+export async function mountOverlay(requested: CaptureMode): Promise<void> {
   // A second hotkey press replaces the overlay rather than stacking one.
   active?.destroy()
 
-  if (mode !== 'region' && mode !== 'element') {
-    // Full-page capture arrives with the offscreen tile scheduler (stage 8);
-    // refusing loudly beats silently capturing the wrong thing.
-    console.warn(`[Hotshot] capture mode "${mode}" is not implemented yet.`)
+  if (requested !== 'region' && requested !== 'element') {
+    // Full page needs no overlay — the whole document is the selection, so it
+    // runs straight through the worker's stitcher. Refusing loudly beats
+    // silently capturing the wrong thing.
+    console.warn(`[Hotshot] capture mode "${requested}" does not use the overlay.`)
     return
   }
-
-  const backdrop = await requestBackdrop()
-  if (!backdrop) {
-    console.error('[Hotshot] could not read the page pixels; capture aborted.')
-    return
-  }
+  // Narrowed once, here: the two modes are the only ones the rest of this
+  // function is written for, and re-checking at each use invites drift.
+  const mode: 'region' | 'element' = requested
 
   const host = document.createElement('div')
   // Lets the element picker recognise and refuse our own UI.
@@ -59,131 +57,187 @@ export async function mountOverlay(mode: CaptureMode): Promise<void> {
     zIndex: '2147483646',
   })
 
-  const { surface, veils, frame, readout, hint } = buildChrome(
+  const { frozen, surface, veils, frame, readout, hint } = buildChrome(
     mode === 'element'
       ? 'hover an element · [ ] to adjust · click to capture · esc cancel'
       : 'drag to select · esc cancel',
   )
 
-  root.append(surface, ...veils, frame, readout, hint)
+  // `frozen` goes first so it paints beneath the veils; everything here is
+  // synchronous, which is the whole point of phase 1.
+  root.append(frozen, surface, ...veils, frame, readout, hint)
   document.documentElement.append(host)
 
   const viewport = { width: window.innerWidth, height: window.innerHeight }
-  // Both factors come from the service worker, sampled at the instant the
-  // backdrop was captured (FR-40). Reading them here would risk disagreeing
-  // with the bitmap we are about to crop.
-  const scale = { zoom: backdrop.zoom, dpr: backdrop.dpr }
-  const backdropUrl = backdrop.dataUrl
-  let anchor: Point | null = null
+  /**
+   * Read from the page, not awaited from the worker (FR-1 phase 1, FR-40).
+   *
+   * `devicePixelRatio` already folds in browser zoom, so the crop geometry is
+   * correct from the first frame and the overlay does not have to block on a
+   * screenshot to become usable. `zoom` is carried only for the readout label
+   * and is filled in when the worker replies.
+   */
+  const scale = { zoom: 1, dpr: window.devicePixelRatio }
   let selection: CssRect | null = null
+  /** The hovered element's true rect, which may exceed the viewport. */
+  let elementRect: CssRect | null = null
   let drawing = false
-  let dragOrigin: Point | null = null
 
-  const elements = createElementMode(root, viewport)
+  const elements = createElementMode(viewport)
 
   const handles = buildHandles()
   const rules = buildDimensionRules()
-  // The loupe reads the same bitmap the crop is cut from (review finding B2).
-  const backdropBitmap = await createImageBitmap(await (await fetch(backdrop.dataUrl)).blob())
-  const loupe = buildLoupe(backdropBitmap, { zoom: backdrop.zoom, dpr: backdrop.dpr }, viewport)
-  root.append(...handles.nodes, ...rules.nodes, loupe.element)
-  let activeHandle: Handle | null = null
+  root.append(...handles.nodes, ...rules.nodes)
 
+  /**
+   * This session's own liveness flag.
+   *
+   * Not `active`: a second hotkey press replaces `active` with a NEW session,
+   * so an in-flight phase 2 belonging to the old one would see a truthy
+   * `active` and paint into a host that is already off the page.
+   */
+  let live = true
+
+  /** Both null until phase 2 lands; every use is guarded. */
+  let backdropBitmap: ImageBitmap | null = null
+  let loupe: ReturnType<typeof buildLoupe> | null = null
+
+  const phaseTwo = startPhaseTwo({
+    root,
+    frozen,
+    hint,
+    viewport,
+    scale,
+    live: () => live,
+    repaint: () => paint(selection),
+    onLoupe: (built) => {
+      loupe = built
+    },
+    onBitmap: (bitmap) => {
+      backdropBitmap = bitmap
+    },
+    onAbort: destroy,
+  })
+
+  /**
+   * Positions every piece of chrome for the current selection.
+   *
+   * Delegated to `paintSelection`, which owns the overlay's visual furniture:
+   * this file is the controller, and the arithmetic of where a readout docks
+   * belongs with the thing that built it.
+   */
   function paint(rect: CssRect | null): void {
-    if (!rect || rect.width === 0 || rect.height === 0) {
-      frame.style.display = 'none'
-      readout.style.display = 'none'
-      handles.hide()
-      rules.hide()
-      coverAll(veils)
-      return
-    }
-
-    const { x, y, width, height } = rect
-    frame.style.display = 'block'
-    Object.assign(frame.style, {
-      left: `${x}px`,
-      top: `${y}px`,
-      width: `${width}px`,
-      height: `${height}px`,
-    })
-
-    frameSelection(veils, rect, viewport)
-
-    // Handles appear once the drag settles; drawing them mid-drag is noise.
-    if (mode === 'region' && !drawing) handles.show(rect)
-    else handles.hide()
-    rules.update(rect)
-
-    const device = toDeviceRect(rect, scale)
-    readout.style.display = 'block'
-    readout.innerHTML =
-      `${Math.round(width)} × ${Math.round(height)}` +
-      (scale.dpr !== 1 ? ` <span style="color:${TOKENS.flare}">@${scale.dpr}x</span>` : '') +
-      (scale.zoom !== 1
-        ? ` <span style="color:${TOKENS.flare}">${Math.round(scale.zoom * 100)}%</span>`
-        : '')
-    // Dock below the selection; flip above when that would leave the viewport.
-    const below = y + height + 6
-    readout.style.left = `${x}px`
-    readout.style.top = below + 24 > viewport.height ? `${Math.max(0, y - 28)}px` : `${below}px`
-    void device
+    paintSelection(
+      { surface, veils, frame, readout, hint, frozen },
+      {
+        rect,
+        viewport,
+        scale,
+        handles,
+        rules,
+        // Handles appear once the drag settles; drawing them mid-drag is noise.
+        showHandles: mode === 'region' && !drawing,
+        reported:
+          mode === 'element' && elementRect ? reportedSize(elementRect, viewport) : null,
+      },
+    )
   }
 
   /** Strips the selection chrome, leaving the shadow root for the editor. */
   function clearChrome(): void {
-    surface.remove()
-    for (const veil of veils) veil.remove()
-    for (const node of [...handles.nodes, ...rules.nodes]) node.remove()
-    loupe.element.remove()
-    frame.remove()
-    readout.remove()
-    hint.remove()
+    for (const node of [surface, ...veils, ...handles.nodes, ...rules.nodes, frame, readout, hint]) {
+      node.remove()
+    }
+    loupe?.element.remove()
   }
 
-  function destroy(): void {
+  /**
+   * Stops listening, without tearing the host down.
+   *
+   * Called the moment a capture is handed to the editor. The host must stay —
+   * the editor mounts into its shadow root — but the overlay's own keys and
+   * pointer handling are finished, and leaving them attached meant the editor
+   * never saw them: Enter re-committed the capture instead of sending it, and
+   * the arrow keys nudged a selection nobody could see any more.
+   */
+  function detach(): void {
     surface.removeEventListener('pointerdown', onDown)
     window.removeEventListener('pointermove', onMove)
     window.removeEventListener('pointerup', onUp)
     window.removeEventListener('keydown', onKey, true)
-    backdropBitmap.close()
+  }
+
+  function destroy(): void {
+    live = false
+    detach()
+    backdropBitmap?.close()
     host.remove()
     active = null
   }
 
   function paintCandidate(candidate: { rect: CssRect } | null): void {
+    // The painted rect is clamped to the viewport because that is all there is
+    // to draw on. The FULL rect is kept because a taller-than-viewport element
+    // is captured by scrolling, not by cropping (FR-5), and clamping it here
+    // was exactly why element capture could only ever return what was visible.
+    elementRect = candidate ? candidate.rect : null
     selection = candidate ? clampToViewport(candidate.rect, viewport) : null
     paint(selection)
   }
 
-  function onDown(event: PointerEvent): void {
-    if (mode === 'element') return
-    const at = { x: event.clientX, y: event.clientY }
-
-    // An existing selection can be resized or moved rather than restarted —
-    // FR-34 treats one imprecise drag forcing a restart as a bug.
-    if (selection) {
-      const handle = handleAtPoint(selection, at)
-      if (handle) {
-        activeHandle = handle
-        dragOrigin = at
-        return
-      }
-      const inside =
-        at.x >= selection.x &&
-        at.x <= selection.x + selection.width &&
-        at.y >= selection.y &&
-        at.y <= selection.y + selection.height
-      if (inside) {
-        dragOrigin = at
-        return
-      }
+  /**
+   * Captures a tall element by handing its box to the worker (FR-5).
+   *
+   * The overlay is torn down FIRST and deliberately: the worker is about to
+   * scroll the page and take real screenshots, and this overlay is a
+   * fixed-position veil covering the whole viewport — leaving it up would
+   * stamp it across every tile.
+   */
+  function commitTallElement(rect: CssRect): void {
+    const band = bandFor(rect, viewport, window.scrollY)
+    if (!band) {
+      console.warn('[Hotshot] the element is entirely off-screen horizontally; capture aborted.')
+      destroy()
+      return
     }
 
-    drawing = true
-    anchor = at
-    selection = null
-    paint(null)
+    destroy()
+    void chrome.runtime.sendMessage({ kind: 'capture/element-band', ...band })
+  }
+
+  const commit = (rect: CssRect): Promise<void> =>
+    commitSelection(rect, phaseTwo.ready, {
+      root,
+      hint,
+      scale,
+      backdropUrl: phaseTwo.url,
+      live: () => live,
+      clearChrome: () => {
+        clearChrome()
+        // The overlay's keys belong to the editor from here on.
+        detach()
+      },
+      destroy,
+    })
+
+  const gestures = createRegionGestures({
+    viewport,
+    selection: () => selection,
+    setSelection: (rect) => {
+      selection = rect
+    },
+    paint,
+    showLoupe: (at) => loupe?.show(at),
+    hideLoupe: () => loupe?.hide(),
+    setDrawing: (value) => {
+      drawing = value
+    },
+  })
+
+  function onDown(event: PointerEvent): void {
+    // Element mode has no drag: the pointer only chooses which element.
+    if (mode === 'element') return
+    gestures.down(event)
   }
 
   function onMove(event: PointerEvent): void {
@@ -191,96 +245,56 @@ export async function mountOverlay(mode: CaptureMode): Promise<void> {
       paintCandidate(elements.hover(event.clientX, event.clientY))
       return
     }
-    const at = { x: event.clientX, y: event.clientY }
-
-    if (selection && dragOrigin) {
-      const dx = at.x - dragOrigin.x
-      const dy = at.y - dragOrigin.y
-      selection = activeHandle
-        ? resizeBy(selection, activeHandle, dx, dy, viewport)
-        : moveBy(selection, dx, dy, viewport)
-      dragOrigin = at
-      paint(selection)
-      return
-    }
-
-    if (!anchor) return
-    // The loupe appears only during a drag: pixel placement is the only time
-    // it earns its space.
-    loupe.show(at)
-    selection = clampToViewport(rectFromDrag(anchor, at), viewport)
-    paint(selection)
-  }
-
-  async function commit(rect: CssRect): Promise<void> {
-    const device = toDeviceRect(rect, scale)
-    const bitmap = await cropToBitmap(backdropUrl, device)
-    clearChrome()
-    await handoffToEditor(root, bitmap, device, destroy)
+    gestures.move(event)
   }
 
   function onUp(): void {
-    if (dragOrigin) {
-      dragOrigin = null
-      activeHandle = null
-      paint(selection)
-      return
-    }
-    drawing = false
-    loupe.hide()
-
     if (mode === 'element') {
-      if (selection && selection.width >= 2 && selection.height >= 2) void commit(selection)
+      if (!selection || selection.width < 2 || selection.height < 2) return
+      // A tall element is scrolled and stitched, never silently cropped to
+      // what happens to be visible (FR-5).
+      if (elementRect && needsScrollCapture(elementRect, viewport)) commitTallElement(elementRect)
+      else void commit(selection)
       return
     }
-    if (!anchor || !selection || selection.width < 2 || selection.height < 2) {
-      anchor = null
-      selection = null
-      paint(null)
-      return
-    }
-    anchor = null
-    // The selection stays live so it can be adjusted; Enter commits it.
-    paint(selection)
+    gestures.up()
   }
 
+  /** Routes a key through the shared keymap; the intents are `overlay-keys`. */
   function onKey(event: KeyboardEvent): void {
-    if (mode === 'region' && event.key === 'Enter' && selection) {
+    const intent = overlayKeyIntent(event, mode)
+    if (!intent) return
+
+    if (intent.kind === 'cancel') {
       event.preventDefault()
       event.stopPropagation()
-      void commit(selection)
-      return
+      return destroy()
     }
 
-    if (mode === 'region' && selection && event.key.startsWith('Arrow')) {
+    if (intent.kind === 'walk') {
+      event.preventDefault()
+      event.stopPropagation()
+      return paintCandidate(elements.walk(intent.direction))
+    }
+
+    if (intent.kind === 'nudge') {
+      // `adjustSelection` owns FR-35's 1px / 10px / move-vs-resize rules.
+      if (!selection) return
       const adjusted = adjustSelection(selection, event, viewport)
-      if (adjusted) {
-        event.preventDefault()
-        selection = adjusted
-        paint(selection)
-      }
-      return
+      if (!adjusted) return
+      event.preventDefault()
+      selection = adjusted
+      return paint(selection)
     }
 
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      event.stopPropagation()
-      destroy()
-      return
-    }
-
-    if (mode === 'element' && (event.code === 'BracketLeft' || event.code === 'BracketRight')) {
-      // Dispatch on `event.code`, not `event.key`: bare-letter and bracket
-      // bindings otherwise break on AZERTY and Dvorak (FR-44).
-      event.preventDefault()
-      event.stopPropagation()
-      paintCandidate(elements.walk(event.code === 'BracketRight' ? 'out' : 'in'))
-      return
-    }
-
-    if (mode === 'element' && event.key === 'Enter' && selection) {
-      event.preventDefault()
-      event.stopPropagation()
+    if (!selection) return
+    event.preventDefault()
+    event.stopPropagation()
+    // Same routing as a click: a tall element is scrolled and stitched, never
+    // silently cropped to what happens to be visible (FR-5).
+    if (mode === 'element' && elementRect && needsScrollCapture(elementRect, viewport)) {
+      commitTallElement(elementRect)
+    } else {
       void commit(selection)
     }
   }
@@ -291,4 +305,9 @@ export async function mountOverlay(mode: CaptureMode): Promise<void> {
   window.addEventListener('keydown', onKey, true)
 
   active = { destroy }
+
+  // FR-1 phase 1: dim the page NOW. The veils have no geometry until they are
+  // positioned, so without this the first frame was an invisible overlay — the
+  // hotkey looked like it had done nothing until the pointer moved.
+  paint(null)
 }

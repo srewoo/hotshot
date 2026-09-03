@@ -3,7 +3,8 @@ import { createSettingsRepo } from '../storage/settings-repo'
 import { resolveProvider } from '../integrations/registry'
 import { shipCapture } from '../integrations/ship'
 import { isErr } from '../shared/result'
-import type { TargetRef } from '../integrations/provider'
+import type { TargetCandidate, TargetRef } from '../integrations/provider'
+import { createTargetCache } from './target-cache'
 
 /**
  * Destination routing (PRD FR-13..FR-19).
@@ -13,12 +14,22 @@ import type { TargetRef } from '../integrations/provider'
  * is what keeps a compromised page from reaching a user's Jira account.
  */
 
-const PROVIDERS: readonly ProviderId[] = ['jira', 'clickup', 'notion']
+const PROVIDERS: readonly ProviderId[] = [
+  'jira',
+  'clickup',
+  'notion',
+  'slack',
+  'linear',
+  'trello',
+  'asana',
+  'dropbox',
+]
 const LAST_TARGET_PREFIX = 'hotshot.lastTarget.'
 
 const area = chromeLocalArea()
 const tokens = createTokenRepo(area)
 const settings = createSettingsRepo(area)
+const targetCache = createTargetCache(area)
 
 const accounts = {
   async jira() {
@@ -56,10 +67,57 @@ export async function listDestinations(): Promise<{
   return { configured, remembered }
 }
 
+/**
+ * Searches a service for plausible targets (FR-41).
+ *
+ * Runs in the worker for the same reason shipping does: the token never leaves
+ * it. The empty-query list is cached briefly, because the picker opens on
+ * every capture and that list is the same for a minute at a time.
+ */
+export async function handleTargetSearch(
+  id: ProviderId,
+  query: string,
+): Promise<{ ok: boolean; candidates: readonly TargetCandidate[]; message?: string }> {
+  const trimmed = query.trim()
+
+  if (!trimmed) {
+    const cached = await targetCache.read(id)
+    if (cached) return { ok: true, candidates: cached }
+  }
+
+  const provider = await resolveProvider(id, tokens, accounts)
+  if (!provider) {
+    return { ok: false, candidates: [], message: `${id} is not connected.` }
+  }
+
+  const result = await provider.searchTargets(trimmed)
+  if (isErr(result)) {
+    // A picker that cannot reach the service is a degradation, not a dead end:
+    // the caller still offers raw-id entry (FR-41's escape hatch).
+    return { ok: false, candidates: [], message: result.error.message }
+  }
+
+  if (!trimmed) await targetCache.write(id, result.value)
+  return { ok: true, candidates: result.value }
+}
+
+/** Called when a token is revoked: cached titles are account data. */
+export async function forgetTargets(id: ProviderId): Promise<void> {
+  await targetCache.clear(id)
+}
+
 export interface ShipRequest {
   readonly provider: ProviderId
   readonly key: string
-  readonly blob: ArrayBuffer
+  /**
+   * The capture as a PNG or JPEG data URL.
+   *
+   * NOT an ArrayBuffer: `sendMessage` is JSON-serialised, so a buffer arrives
+   * as `{}` and would be uploaded as the string "[object Object]". JPEG is
+   * accepted as well as PNG because a capture over a destination's attachment
+   * limit is compressed before it is sent (`export-plan`).
+   */
+  readonly dataUrl: string
   readonly url: string
   readonly title: string
   readonly viewportWidth: number
@@ -67,18 +125,33 @@ export interface ShipRequest {
   readonly devicePixelRatio: number
 }
 
-export async function handleShip(
-  request: ShipRequest,
-): Promise<{ ok: boolean; message: string }> {
+/** PNG or JPEG only: this value is fetched, and must not be able to be a URL. */
+const IMAGE_DATA_URL = /^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/
+
+export interface ShipOutcome {
+  readonly ok: boolean
+  readonly message: string
+  readonly url?: string
+  readonly destination?: { provider: ProviderId; key: string; url?: string }
+}
+
+export async function handleShip(request: ShipRequest): Promise<ShipOutcome> {
   const provider = await resolveProvider(request.provider, tokens, accounts)
   if (!provider) {
     return { ok: false, message: `${request.provider} is not connected. Add a token in Settings.` }
   }
 
+  if (typeof request.dataUrl !== 'string' || !IMAGE_DATA_URL.test(request.dataUrl)) {
+    // Refused rather than uploaded: shipping a malformed payload attaches
+    // something that is not an image, which is worse than failing.
+    return { ok: false, message: 'The capture could not be read for sending.' }
+  }
+  const blob = await (await fetch(request.dataUrl)).blob()
+
   const result = await shipCapture(
     request.provider,
     { key: request.key },
-    new Blob([request.blob], { type: 'image/png' }),
+    blob,
     {
       url: request.url,
       title: request.title,
@@ -93,11 +166,22 @@ export async function handleShip(
     {
       provider,
       settings: await settings.read(),
+      linkContext: { jiraSite: (await accounts.jira())?.site },
       rememberTarget,
       lastTarget,
     },
   )
 
   if (isErr(result)) return { ok: false, message: result.error.message }
-  return { ok: true, message: `Sent — ${result.value.url}` }
+
+  // The link IS the share link (see ship.ts) — hand it back so the editor can
+  // offer to copy it. Hotshot hosts nothing and still produces a URL.
+  return {
+    ok: true,
+    message: 'Sent',
+    url: result.value.url,
+    // Returned so the caller can record the outcome against the capture in
+    // history, which is what makes "send it there again" possible (FR-25).
+    destination: { provider: request.provider, key: request.key, url: result.value.url },
+  }
 }

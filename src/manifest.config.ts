@@ -26,11 +26,45 @@ const manifest: ManifestV3Export = {
   // `notifications` backs FR-30's second layer: a keyboard-triggered command
   // does not open the popup, so on a restricted page the badge and a
   // notification are the only surfaces that can carry the reason.
-  permissions: ['activeTab', 'scripting', 'storage', 'downloads', 'offscreen', 'notifications'],
+  /**
+   * `unlimitedStorage` is here for the library, not for ambition.
+   *
+   * Captures are stored as blobs in IndexedDB, and the library's own budget is
+   * 256 MB. Without this, Chrome evicts under quota pressure — which would
+   * silently delete someone's captures, the one thing a local-first library
+   * must never do. It carries no install-time warning.
+   */
+  permissions: [
+    'activeTab',
+    'scripting',
+    'storage',
+    'unlimitedStorage',
+    'downloads',
+    'offscreen',
+    'notifications',
+  ],
+  /**
+   * Every integration host is OPTIONAL and requested at token-setup time.
+   *
+   * The list grows with the destinations, and each entry is still granted only
+   * when a user connects that service — an eight-host install prompt would
+   * undo the reason there is no `<all_urls>` here in the first place (FR-23).
+   */
   optional_host_permissions: [
     'https://*.atlassian.net/*',
     'https://api.notion.com/*',
     'https://api.clickup.com/*',
+    'https://slack.com/*',
+    // Slack issues upload URLs on its own file host, so the upload leg needs
+    // that origin as well as the API's.
+    'https://files.slack.com/*',
+    'https://api.linear.app/*',
+    // Linear's `fileUpload` returns a pre-signed URL on its asset host.
+    'https://uploads.linear.app/*',
+    'https://api.trello.com/*',
+    'https://app.asana.com/*',
+    'https://api.dropboxapi.com/*',
+    'https://content.dropboxapi.com/*',
   ],
 
   icons: {

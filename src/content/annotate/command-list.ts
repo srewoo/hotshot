@@ -35,12 +35,24 @@ export interface AnnotationCommand {
   readonly text?: string
 }
 
-/** A deletion is an entry in the log too, so removing is undoable. */
-type Entry = { readonly op: 'add'; readonly command: AnnotationCommand } | { readonly op: 'remove'; readonly id: string }
+/**
+ * Deletions and edits are entries in the log too, so every change is undoable.
+ *
+ * `replace` is what makes a mark editable after it is drawn: moving, resizing
+ * or recolouring rewrites one command in place rather than removing and
+ * re-adding it, which would move the mark to the end of the list and renumber
+ * every step badge after it (FR-8).
+ */
+type Entry =
+  | { readonly op: 'add'; readonly command: AnnotationCommand }
+  | { readonly op: 'replace'; readonly command: AnnotationCommand }
+  | { readonly op: 'remove'; readonly id: string }
 
 export interface CommandList {
   commands(): readonly AnnotationCommand[]
   push(command: AnnotationCommand): void
+  /** Rewrites a mark in place, keeping its position in the draw order. */
+  replace(command: AnnotationCommand): void
   remove(id: string): void
   undo(): void
   redo(): void
@@ -57,8 +69,14 @@ export function createCommandList(): CommandList {
   function materialise(): AnnotationCommand[] {
     const out: AnnotationCommand[] = []
     for (const entry of log.slice(0, cursor)) {
-      if (entry.op === 'add') out.push(entry.command)
-      else {
+      if (entry.op === 'add') {
+        out.push(entry.command)
+      } else if (entry.op === 'replace') {
+        const index = out.findIndex((c) => c.id === entry.command.id)
+        // An edit to a mark that is no longer there is dropped, not appended:
+        // undoing past a delete and redoing the edit must not resurrect it.
+        if (index !== -1) out[index] = entry.command
+      } else {
         const index = out.findIndex((c) => c.id === entry.id)
         if (index !== -1) out.splice(index, 1)
       }
@@ -79,6 +97,10 @@ export function createCommandList(): CommandList {
 
     push(command) {
       record({ op: 'add', command })
+    },
+
+    replace(command) {
+      record({ op: 'replace', command })
     },
 
     remove(id) {

@@ -33,13 +33,25 @@ export function handlePositions(rect: CssRect): Record<Handle, Point> {
   }
 }
 
-export function handleAtPoint(rect: CssRect, point: Point): Handle | null {
+/**
+ * The handle under the point, or null.
+ *
+ * `reachPx` defaults to the WCAG target but is a parameter because the editor
+ * hit-tests in CANVAS pixels: on a full-page stitch shown at 0.27x, a 24px
+ * screen target is 89 canvas px, and a fixed 24 would make the handles
+ * unhittable on exactly the captures that most need editing.
+ */
+export function handleAtPoint(
+  rect: CssRect,
+  point: Point,
+  reachPx: number = HANDLE_HIT_PX,
+): Handle | null {
   // On a collapsed rect every handle is coincident, so offering one would be
   // meaningless — the user is starting a new drag, not resizing.
   if (rect.width <= 0 || rect.height <= 0) return null
 
   const positions = handlePositions(rect)
-  const reach = HANDLE_HIT_PX / 2
+  const reach = reachPx / 2
 
   for (const handle of ORDER) {
     const at = positions[handle]

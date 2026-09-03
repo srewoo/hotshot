@@ -40,10 +40,23 @@ export function idbHistoryStore(): HistoryStore & {
   putWithBlob(entry: StoredCapture): Promise<void>
 } {
   return {
+    /**
+     * Writes metadata, PRESERVING the stored blob.
+     *
+     * `all()` deliberately strips blobs so listing twenty captures does not
+     * decode twenty images — which means every entry a caller has in hand is
+     * blob-less. A plain `put` of one would overwrite the row and destroy the
+     * capture: favouriting a screenshot silently deleted the screenshot. So
+     * this merges into whatever is already there.
+     */
     async put(entry) {
       const db = await open()
       const tx = db.transaction(STORE, 'readwrite')
-      await promisify(tx.objectStore(STORE).put(entry))
+      const store = tx.objectStore(STORE)
+      const existing = await promisify(
+        store.get(entry.id) as IDBRequest<StoredCapture | undefined>,
+      )
+      await promisify(store.put(existing ? { ...existing, ...entry } : entry))
       db.close()
     },
 

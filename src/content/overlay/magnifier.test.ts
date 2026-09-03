@@ -31,13 +31,22 @@ describe('sourceRectFor', () => {
     })
   })
 
-  test('accounts for browser zoom the same way the crop does', () => {
-    expect(sourceRectFor({ x: 100, y: 100 }, { zoom: 1.5, dpr: 1 })).toEqual({
+  test('samples through devicePixelRatio the same way the crop does', () => {
+    // Chrome reports dpr 1.5 at 150% zoom on a 1x display, and the loupe must
+    // agree with `toDeviceRect` exactly — the whole point of the shared
+    // backdrop is that the loupe shows the pixels the crop will take.
+    expect(sourceRectFor({ x: 100, y: 100 }, { zoom: 1.5, dpr: 1.5 })).toEqual({
       x: 145,
       y: 145,
       width: 11,
       height: 11,
     })
+  })
+
+  test('does not double-count zoom, which devicePixelRatio already carries', () => {
+    expect(sourceRectFor({ x: 100, y: 100 }, { zoom: 1, dpr: 2 })).toEqual(
+      sourceRectFor({ x: 100, y: 100 }, { zoom: 2, dpr: 2 }),
+    )
   })
 
   test('never returns a negative origin at the top-left corner', () => {

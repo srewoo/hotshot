@@ -1,6 +1,12 @@
 import { z } from 'zod'
 import { err, ok, type Result } from '../../shared/result'
-import type { Identity, IntegrationProvider, ProviderError, TargetRef } from '../provider'
+import type {
+  Identity,
+  IntegrationProvider,
+  ProviderError,
+  TargetCandidate,
+  TargetRef,
+} from '../provider'
 import { request } from '../http'
 
 /**
@@ -31,6 +37,36 @@ const identitySchema = z.object({
 const attachmentSchema = z
   .array(z.object({ id: z.string().min(1), filename: z.string() }))
   .nonempty()
+
+/**
+ * Jira's own type-ahead endpoint (FR-41).
+ *
+ * `/issue/picker` is exactly this feature server-side: with no query it
+ * returns recently-viewed issues, and with one it searches keys and summaries.
+ * Using it rather than a JQL search means Jira decides what "recent" means,
+ * which it knows and Hotshot does not.
+ *
+ * The sections are permissive on purpose — Jira varies the set by deployment,
+ * and an unexpected extra section must degrade to fewer suggestions rather
+ * than to a schema error over a feature that is only a convenience.
+ */
+const pickerSchema = z.object({
+  sections: z
+    .array(
+      z.object({
+        issues: z
+          .array(
+            z.object({
+              key: z.string().min(1),
+              summaryText: z.string().optional(),
+              summary: z.string().optional(),
+            }),
+          )
+          .optional(),
+      }),
+    )
+    .optional(),
+})
 
 function authHeader(config: JiraConfig): string {
   return `Basic ${btoa(`${config.email}:${config.token}`)}`
@@ -84,6 +120,45 @@ export function createJiraProvider(
         })
       }
       return ok(parsed.data)
+    },
+
+    async searchTargets(query: string) {
+      const url = `${base}/issue/picker?currentJQL=${encodeURIComponent('order by updated desc')}${
+        query.trim() ? `&query=${encodeURIComponent(query.trim())}` : ''
+      }`
+      const response = await request(
+        fetchImpl,
+        url,
+        { headers: { Authorization: authHeader(config), Accept: 'application/json' } },
+        messageFor(),
+        NETWORK_MESSAGE,
+      )
+      if (!response.ok) return response
+
+      const parsed = pickerSchema.safeParse(await response.value.json())
+      if (!parsed.success) {
+        return err({
+          kind: 'schema',
+          message: 'Jira replied to the issue search in an unrecognised shape.',
+        })
+      }
+
+      const seen = new Set<string>()
+      const candidates: TargetCandidate[] = []
+      for (const section of parsed.data.sections ?? []) {
+        for (const issue of section.issues ?? []) {
+          // Sections overlap — "recent" and "matching" both list the same
+          // issue — and a picker that shows a key twice looks broken.
+          if (seen.has(issue.key)) continue
+          seen.add(issue.key)
+          candidates.push({
+            key: issue.key,
+            title: issue.summaryText ?? issue.summary ?? issue.key,
+            hint: issue.key,
+          })
+        }
+      }
+      return ok(candidates)
     },
 
     async attachImage(target: TargetRef, blob: Blob, filename: string) {

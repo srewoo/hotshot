@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Virtualised list</title>
+<style>body{margin:0;font:14px system-ui}.row{height:32px;padding:6px 12px;border-bottom:1px solid #eee}</style>
+</head><body>
+<div id="viewport" style="margin:30px;width:300px;height:200px;overflow:auto;border:1px solid #999">
+  <div id="spacer" style="height:3200px;position:relative">
+    <div class="row" id="r10" style="position:absolute;top:320px;left:0;right:0">Row 10</div>
+    <div class="row" id="r11" style="position:absolute;top:352px;left:0;right:0">Row 11</div>
+  </div>
+</div>
+<script>document.getElementById('viewport').scrollTop = 320</script>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[
+ {"x":100,"y":45,"expect":"#r10","why":"an absolutely positioned row inside a scrolled virtual list reports correct viewport bounds"}
+]</script></body></html>

@@ -53,12 +53,53 @@ const captureComplete = z.object({
 })
 
 /**
+ * A finished full-page stitch, handed back to the page so it can go through
+ * the editor like every other mode (capture → annotate → deliver).
+ *
+ * `dataUrl` is pinned to a PNG data URL rather than typed as a plain string:
+ * the content script `fetch`es this value in the PAGE's origin, so accepting
+ * an arbitrary URL here would turn a stale or hostile sender into a
+ * page-origin request. A data URL cannot leave the machine.
+ */
+const captureStitched = z.object({
+  kind: z.literal('capture/stitched'),
+  dataUrl: z.string().regex(/^data:image\/png;base64,[A-Za-z0-9+/=]+$/, {
+    message: 'dataUrl must be a PNG data URL',
+  }),
+  /** Non-null when the stitch was cut short and delivered partially (FR-31). */
+  partialWarning: z.string().min(1).nullable(),
+})
+
+/**
+ * A request to capture one element that is taller than the viewport (FR-5).
+ *
+ * The page measures the element and the worker does the scrolling, because
+ * only the worker can call `captureVisibleTab`. Coordinates are CSS px: `top`
+ * from the document's top so it survives the scrolling, `left` from the
+ * viewport's left.
+ */
+const captureElementBand = z.object({
+  kind: z.literal('capture/element-band'),
+  top: z.number().nonnegative(),
+  left: z.number(),
+  width: z.number().positive(),
+  height: z.number().positive(),
+})
+
+/**
  * `discriminatedUnion` rather than `union`: it reports the failing member's
  * own issues instead of a wall of alternatives, which is what makes a
  * production message-shape bug diagnosable from a single log line.
  */
 export const envelopeSchema = z
-  .discriminatedUnion('kind', [captureBegin, captureProgress, captureAbort, captureComplete])
+  .discriminatedUnion('kind', [
+    captureBegin,
+    captureProgress,
+    captureAbort,
+    captureComplete,
+    captureStitched,
+    captureElementBand,
+  ])
   // Cross-field rules live here rather than on a member: a `.refine()` on a
   // union member produces a ZodEffects, which has no discriminator for
   // `discriminatedUnion` to read.

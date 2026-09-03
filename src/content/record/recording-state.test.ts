@@ -130,3 +130,79 @@ describe('estimateBytes', () => {
     expect(estimateBytes({ mode: 'video', ms: 0, width: 800, height: 600 })).toBe(0)
   })
 })
+
+describe('pause and resume', () => {
+  test('a pause freezes the clock', () => {
+    const session = createRecordingSession('video')
+    session.start(0)
+    session.pause(3_000)
+    expect(session.elapsedMs(3_000)).toBe(3_000)
+    // Ten seconds of wall clock later, still three seconds recorded.
+    expect(session.elapsedMs(13_000)).toBe(3_000)
+    expect(session.state()).toBe('paused')
+  })
+
+  test('resuming continues from where it stopped, not from zero', () => {
+    const session = createRecordingSession('video')
+    session.start(0)
+    session.pause(3_000)
+    session.resume(20_000)
+    expect(session.elapsedMs(21_000)).toBe(4_000)
+  })
+
+  test('several pauses accumulate correctly', () => {
+    const session = createRecordingSession('video')
+    session.start(0)
+    session.pause(1_000)
+    session.resume(5_000)
+    session.pause(6_500)
+    session.resume(10_000)
+    expect(session.elapsedMs(10_500)).toBe(3_000)
+  })
+
+  /**
+   * The reason paused time is excluded: a five-minute cap that counted the
+   * four minutes you were paused would cut you off mid-sentence, with the
+   * badge showing a minute.
+   */
+  test('paused time does not count against the cap', () => {
+    const session = createRecordingSession('gif')
+    session.start(0)
+    session.pause(10_000)
+    // A full hour paused.
+    expect(session.shouldAutoStop(3_600_000)).toBe(false)
+    session.resume(3_600_000)
+    expect(session.shouldAutoStop(3_600_000 + 40_000)).toBe(false)
+    expect(session.shouldAutoStop(3_600_000 + 51_000)).toBe(true)
+  })
+
+  test('stopping from a pause keeps what was recorded', () => {
+    const session = createRecordingSession('video')
+    session.start(0)
+    session.pause(4_000)
+    session.stop(9_000)
+    expect(session.state()).toBe('stopped')
+    expect(session.shouldDeliver()).toBe(true)
+    expect(session.elapsedMs(9_000)).toBe(4_000)
+  })
+
+  test('pausing an idle session does nothing', () => {
+    const session = createRecordingSession('video')
+    session.pause(1_000)
+    expect(session.state()).toBe('idle')
+  })
+
+  test('resuming a running session does nothing', () => {
+    const session = createRecordingSession('video')
+    session.start(0)
+    session.resume(5_000)
+    expect(session.elapsedMs(6_000)).toBe(6_000)
+  })
+
+  test('the badge label reflects paused time, not wall clock', () => {
+    const session = createRecordingSession('video')
+    session.start(0)
+    session.pause(65_000)
+    expect(session.label(600_000)).toBe('1:05')
+  })
+})

@@ -21,11 +21,34 @@ export const SETTLE_MS = 250
 export interface Tile {
   readonly index: number
   readonly scrollY: number
+  /**
+   * Where this tile's top edge belongs on the stitch canvas, in CSS px.
+   *
+   * Zero for a full-page capture. For a bounded region it can be NEGATIVE:
+   * when the region starts below the page's maximum scroll offset, the tile
+   * necessarily includes content above the region, and the stitcher clips it
+   * by drawing at a negative offset.
+   */
+  readonly offsetCssPx: number
+}
+
+/**
+ * A vertical band of the document to capture, in CSS px from its top.
+ *
+ * Bounding the stitch is what makes FR-5 possible: an element taller than the
+ * viewport is the same scroll-and-stitch pipeline, stopped at the element's
+ * own box instead of the document's.
+ */
+export interface CaptureBand {
+  readonly top: number
+  readonly height: number
 }
 
 export interface PageMetrics {
   readonly documentHeight: number
   readonly viewportHeight: number
+  /** Defaults to the whole document. */
+  readonly band?: CaptureBand | undefined
 }
 
 export interface ProgressInput {
@@ -40,21 +63,30 @@ export interface Progress {
   readonly etaMs: number
 }
 
-export function planTiles({ documentHeight, viewportHeight }: PageMetrics): Tile[] {
+export function planTiles({ documentHeight, viewportHeight, band }: PageMetrics): Tile[] {
   if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) {
     throw new RangeError(`viewportHeight must be a positive finite number, got ${viewportHeight}`)
   }
 
-  const count = Math.max(1, Math.ceil(documentHeight / viewportHeight))
+  const top = band ? band.top : 0
+  const height = band ? band.height : documentHeight
+  if (!Number.isFinite(top) || top < 0) {
+    throw new RangeError(`band.top must be a non-negative finite number, got ${top}`)
+  }
+  if (!Number.isFinite(height) || height <= 0) {
+    throw new RangeError(`band.height must be a positive finite number, got ${height}`)
+  }
+
+  const count = Math.max(1, Math.ceil(height / viewportHeight))
   const maxScroll = Math.max(0, documentHeight - viewportHeight)
 
-  return Array.from({ length: count }, (_, index) => ({
-    index,
-    // The last tile is pinned to the document bottom rather than overscrolling.
-    // It overlaps its predecessor, which the stitcher trims — capturing blank
-    // space below the content would be worse.
-    scrollY: Math.min(index * viewportHeight, maxScroll),
-  }))
+  return Array.from({ length: count }, (_, index) => {
+    // The last tile is pinned rather than overscrolling: it overlaps its
+    // predecessor, which the stitcher paints over — capturing blank space
+    // below the content would be worse.
+    const scrollY = Math.min(top + index * viewportHeight, maxScroll)
+    return { index, scrollY, offsetCssPx: scrollY - top }
+  })
 }
 
 /** Wall-clock estimate. The first capture is immediate; the gap is between calls. */

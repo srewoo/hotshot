@@ -27,8 +27,10 @@ export interface DrawSurface {
 }
 
 const HIGHLIGHT_ALPHA = 0.35
-const BADGE_RADIUS = 12
-const ARROW_HEAD_PX = 14
+// Exported so hit-testing measures the same ink the renderer lays down. Two
+// copies of these numbers is two chances for a badge you can see but not click.
+export const BADGE_RADIUS = 12
+export const ARROW_HEAD_PX = 14
 const ARROW_HEAD_ANGLE = Math.PI / 7
 
 /** Normalises two corner points into a positive-sized rect. */

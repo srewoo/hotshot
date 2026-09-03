@@ -1,6 +1,7 @@
 import type { DrawSurface } from './render'
 import type { AnnotationPoint } from './command-list'
 import type { CssRect } from '../../shared/geometry/device-rect'
+import { textBounds } from './object-edit'
 
 /**
  * Binds the tested `DrawSurface` contract to a real 2D context.
@@ -10,7 +11,18 @@ import type { CssRect } from '../../shared/geometry/device-rect'
  */
 
 const BADGE_FONT = '600 13px "IBM Plex Mono", ui-monospace, monospace'
-const TEXT_FONT = '500 15px "IBM Plex Sans", system-ui, sans-serif'
+
+/**
+ * The free-text font, in parts.
+ *
+ * Exported so the inline text input can render the caret in the SAME face and
+ * size the canvas will draw — otherwise the text reflows the moment editing
+ * ends, which is the tell of a fake WYSIWYG editor.
+ */
+export const TEXT_FONT_WEIGHT = 500
+export const TEXT_FONT_SIZE_PX = 15
+export const TEXT_FONT_FAMILY = '"IBM Plex Sans", system-ui, sans-serif'
+export const TEXT_FONT = `${TEXT_FONT_WEIGHT} ${TEXT_FONT_SIZE_PX}px ${TEXT_FONT_FAMILY}`
 
 export function canvasSurface(
   context: CanvasRenderingContext2D,
@@ -101,9 +113,11 @@ export function canvasSurface(
       }
 
       // Free text gets a dark backing so it survives a light or busy page.
-      const metrics = context.measureText(value)
+      // Measured through `textBounds`, the same function hit-testing uses, so
+      // the plate you can see is provably the box you can click.
+      const box = textBounds(value, at, (v) => context.measureText(v).width)
       context.fillStyle = 'rgba(6,6,5,0.92)'
-      context.fillRect(at.x - 4, at.y - 3, metrics.width + 8, 22)
+      context.fillRect(box.x, box.y, box.width, box.height)
       context.fillStyle = fill
       context.fillText(value, at.x, at.y)
     },

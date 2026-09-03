@@ -11,16 +11,37 @@ import { isErr } from '../../shared/result'
  * token — the capture is already made and the user is already moving on.
  */
 
-const HOSTS: Record<ProviderId, string> = {
-  jira: 'https://*.atlassian.net/*',
-  notion: 'https://api.notion.com/*',
-  clickup: 'https://api.clickup.com/*',
+/**
+ * The host each service needs, requested only when it is connected (FR-23).
+ *
+ * Some services need two origins: an API host and a separate host that issues
+ * or receives uploads. Both are granted together, because a half-granted
+ * service fails at the upload leg with an opaque CORS error.
+ */
+const HOSTS: Record<ProviderId, readonly string[]> = {
+  jira: ['https://*.atlassian.net/*'],
+  notion: ['https://api.notion.com/*'],
+  clickup: ['https://api.clickup.com/*'],
+  slack: ['https://slack.com/*', 'https://files.slack.com/*'],
+  linear: ['https://api.linear.app/*', 'https://uploads.linear.app/*'],
+  trello: ['https://api.trello.com/*'],
+  asana: ['https://app.asana.com/*'],
+  dropbox: ['https://api.dropboxapi.com/*', 'https://content.dropboxapi.com/*'],
 }
 
 const TOKEN_HELP: Record<ProviderId, string> = {
   jira: 'Create an API token at id.atlassian.com → Security → API tokens.',
-  notion: 'Create an internal integration at notion.so/my-integrations, then invite it to each page you want to send to.',
+  notion:
+    'Create an internal integration at notion.so/my-integrations, then invite it to each page you want to send to.',
   clickup: 'ClickUp → Settings → Apps → Generate a personal API token.',
+  slack:
+    'Create an app at api.slack.com/apps with the files:write and channels:read scopes, install it, then paste the bot token (xoxb-…). Invite the app to any channel you want to send to.',
+  linear: 'Linear → Settings → Security & access → Personal API keys.',
+  trello:
+    'Get a key and token at trello.com/power-ups/admin, then paste them here as key:token — Trello needs both.',
+  asana: 'Asana → Settings → Apps → Manage developer apps → Personal access token.',
+  dropbox:
+    'Create an app at dropbox.com/developers/apps with files.content.write, then generate an access token.',
 }
 
 type Status =
@@ -46,7 +67,7 @@ export function ServiceBlock({ id, name }: { id: ProviderId; name: string }) {
 
     // Requested here, not at install: install-time permission breadth is the
     // main reason users distrust this category (FR-23).
-    const granted = await chrome.permissions.request({ origins: [HOSTS[id]] })
+    const granted = await chrome.permissions.request({ origins: [...HOSTS[id]] })
     if (!granted) {
       setStatus({ state: 'error', message: `Hotshot needs permission to reach ${name}.` })
       return
@@ -79,7 +100,11 @@ export function ServiceBlock({ id, name }: { id: ProviderId; name: string }) {
     await tokens.revoke(id)
     // Hand the permission back too: keeping host access for a service the
     // user disconnected would make the privacy claim untrue.
-    await chrome.permissions.remove({ origins: [HOSTS[id]] })
+    await chrome.permissions.remove({ origins: [...HOSTS[id]] })
+    // And drop the cached target titles. They are issue summaries and page
+    // names from the account being disconnected — FR-22's "clears the token
+    // AND all cached metadata" is about exactly this.
+    await chrome.runtime.sendMessage({ kind: 'destinations/forget', provider: id })
     setSaved(null)
     setStatus({ state: 'idle' })
   }

@@ -1,24 +1,24 @@
-import { maxCapturableCssHeight } from '../shared/geometry/canvas-limits'
+import { createCompositor, type Compositor, type CompositorSpec } from './composite'
 
 /**
- * Offscreen stitcher (Architecture §3, PRD FR-2/FR-43).
+ * Offscreen stitcher (Architecture §3, PRD FR-2/FR-5/FR-43).
  *
  * Lives here rather than in the service worker because a 20,000px stitch takes
  * ~17s and MV3 may terminate a worker mid-operation. The worker starts the job
  * and gets out of the way.
+ *
+ * This module is the message plumbing only; the geometry is `composite.ts`,
+ * which is driven directly by its own browser test.
  */
 
-interface StitchBegin {
+interface StitchBegin extends CompositorSpec {
   kind: 'stitch/begin'
-  widthDevicePx: number
-  totalHeightDevicePx: number
-  cssWidth: number
-  dpr: number
 }
 
 interface StitchTile {
   kind: 'stitch/tile'
   dataUrl: string
+  /** May be negative: see `Tile.offsetCssPx`. */
   offsetDevicePx: number
 }
 
@@ -28,50 +28,33 @@ interface StitchFinish {
 
 type StitchMessage = StitchBegin | StitchTile | StitchFinish
 
-let canvas: OffscreenCanvas | null = null
-let context: OffscreenCanvasRenderingContext2D | null = null
+let compositor: Compositor | null = null
 
-async function begin(message: StitchBegin): Promise<void> {
-  // Refuse BEFORE allocating, in device pixels against both Chrome caps.
-  // A canvas past the limit does not throw — it silently fails to render,
-  // which the user would only discover by looking at a blank PNG.
-  const maxCss = maxCapturableCssHeight({ cssWidth: message.cssWidth, dpr: message.dpr })
-  const requestedCss = message.totalHeightDevicePx / message.dpr
-  if (requestedCss > maxCss) {
-    throw new Error(
-      `This page is ${Math.round(requestedCss)} CSS px tall; on this display Hotshot can stitch up to ${maxCss}.`,
-    )
-  }
-
-  canvas = new OffscreenCanvas(message.widthDevicePx, message.totalHeightDevicePx)
-  context = canvas.getContext('2d')
-  if (!context) throw new Error('Could not acquire a 2D context for stitching.')
+function begin(message: StitchBegin): void {
+  compositor = createCompositor(message)
 }
 
 async function addTile(message: StitchTile): Promise<void> {
-  if (!context) throw new Error('A tile arrived before the stitch was started.')
+  if (!compositor) throw new Error('A tile arrived before the stitch was started.')
   const response = await fetch(message.dataUrl)
   const bitmap = await createImageBitmap(await response.blob())
   try {
-    // Tiles overlap at the document bottom by design (see `planTiles`); drawing
-    // at the true offset lets the later tile paint over the duplicate rows.
-    context.drawImage(bitmap, 0, message.offsetDevicePx)
+    compositor.addTile(bitmap, message.offsetDevicePx)
   } finally {
     bitmap.close()
   }
 }
 
 async function finish(): Promise<string> {
-  if (!canvas) throw new Error('Finish was requested before the stitch was started.')
-  const blob = await canvas.convertToBlob({ type: 'image/png' })
+  if (!compositor) throw new Error('Finish was requested before the stitch was started.')
+  const blob = await compositor.finish()
   const reader = new FileReader()
   const dataUrl = await new Promise<string>((resolve, reject) => {
     reader.onload = () => resolve(String(reader.result))
     reader.onerror = () => reject(new Error('Could not encode the stitched image.'))
     reader.readAsDataURL(blob)
   })
-  canvas = null
-  context = null
+  compositor = null
   return dataUrl
 }
 
@@ -84,7 +67,7 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
   void (async () => {
     try {
       if (msg.kind === 'stitch/begin') {
-        await begin(msg)
+        begin(msg)
         sendResponse({ ok: true })
       } else if (msg.kind === 'stitch/tile') {
         await addTile(msg)
@@ -92,14 +75,13 @@ chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) =
       } else {
         sendResponse({ ok: true, dataUrl: await finish() })
       }
-    } catch (error) {
-      // Reset so a failed stitch cannot leave a half-built canvas behind for
-      // the next attempt to draw into.
-      canvas = null
-      context = null
+    } catch (error: unknown) {
+      // Reported rather than thrown: the worker is waiting on this reply and a
+      // rejected promise here would hang the capture instead of failing it.
+      compositor = null
       sendResponse({ ok: false, error: error instanceof Error ? error.message : String(error) })
     }
   })()
 
-  return true
+  return true // keep the channel open for the async response
 })

@@ -1,187 +1,246 @@
 import {
   cascadeOrigin,
+  clampPinPosition,
   clampPinSize,
-  displayFormFor,
+  GHOST_OPACITY,
   MAX_PINS_PER_TAB,
-  nextOpacity,
+  pinNumbers,
+  restack,
   withinMemoryBudget,
+  type PinRect,
   type Size,
 } from './pin-layout'
-import { HOTSHOT_HOST_ATTRIBUTE } from '../overlay/element-chain'
+import { buildPinView, type PinView } from './pin-view'
+import { displaySizeFor, renderPinImage } from './pin-mipmap'
+import { bindPinGestures } from './pin-gestures'
+import { cropBlob } from './pin-crop'
 
 /**
- * Pin-to-screen (PRD FR-37/FR-38, DESIGN §3.9).
+ * The pins on a page, as a set (PRD FR-37/FR-38, DESIGN §3.9).
  *
- * Resting state is 2px of chrome and nothing else. The overlay and the pin
- * share the unknown-backdrop problem but have opposite time signatures: the
- * overlay is transient and must command, the pin is persistent and must
- * recede. So legibility is bought with geometry rather than luminance — the
- * rule pair costs nothing over an hour, whereas a titlebar charges rent
- * continuously. The whole plate is the drag handle, which is what lets the
- * titlebar go.
+ * One pin's DOM is `pin-view` and its gestures are `pin-gestures`; the
+ * geometry is `pin-layout`. This owns what only makes sense across pins: the
+ * stack order and its numbering, focus cycling, the memory ceiling that keeps
+ * a tab out of OOM, and the undo that makes dismissal safe.
  */
 
-const RULE_OUTER = 'rgba(6,6,5,0.92)'
-const RULE_INNER = '#FFFFFF'
-const FLARE = '#FF5A00'
+const DEFAULT_WIDTH_PX = 520
 
 interface Pin {
-  readonly host: HTMLDivElement
-  size: Size
+  readonly id: string
+  readonly view: PinView
+  readonly natural: Size
+  readonly url: string
+  /** The full-resolution capture, kept so a crop and an undo stay lossless. */
+  readonly source: Blob
+  rect: PinRect
   opacity: number
 }
 
-const pins: Pin[] = []
+const pins = new Map<string, Pin>()
+/** Back to front. The last id paints on top. */
+let order: readonly string[] = []
+let focused: string | null = null
 
-function currentSizes(): Size[] {
-  return pins.map((pin) => pin.size)
+/**
+ * The last dismissed pin, restorable for a short while.
+ *
+ * Dismissal is one keypress on a pin that took a capture, a crop and an
+ * annotation to produce — and Escape sits next to the arrow keys that move it.
+ * Without an undo, a slip destroys all of that silently.
+ */
+export const DISMISS_UNDO_MS = 8_000
+let lastDismissed: { source: Blob; rect: PinRect; opacity: number; at: number } | null = null
+
+function viewport(): { width: number; height: number } {
+  return { width: window.innerWidth, height: window.innerHeight }
+}
+
+function repaintStack(): void {
+  const numbers = pinNumbers(order)
+  for (const [index, id] of order.entries()) {
+    const pin = pins.get(id)
+    if (!pin) continue
+    pin.view.setStackIndex(index)
+    pin.view.setNumber(numbers[id] as number)
+    pin.view.setActive(id === focused)
+  }
 }
 
 export function pinCount(): number {
-  return pins.length
+  return pins.size
 }
 
 export function dismissAllPins(): void {
-  for (const pin of pins.splice(0)) pin.host.remove()
+  for (const pin of pins.values()) {
+    URL.revokeObjectURL(pin.url)
+    pin.view.destroy()
+  }
+  pins.clear()
+  order = []
+  focused = null
 }
 
-export async function addPin(blob: Blob): Promise<boolean> {
-  const bitmap = await createImageBitmap(blob)
-  const natural: Size = { width: bitmap.width, height: bitmap.height }
-  bitmap.close()
+function removePin(id: string, options: { silent?: boolean } = {}): void {
+  const pin = pins.get(id)
+  if (!pin) return
 
-  const scale = Math.min(1, 520 / natural.width)
-  const size = clampPinSize(natural, scale)
+  // A crop replaces a pin rather than dismissing it, so it must not overwrite
+  // the undo slot — cropping would otherwise discard the user's last real
+  // dismissal and offer to restore something they never lost.
+  if (!options.silent) {
+    lastDismissed = { source: pin.source, rect: pin.rect, opacity: pin.opacity, at: Date.now() }
+  }
+
+  URL.revokeObjectURL(pin.url)
+  pin.view.destroy()
+  pins.delete(id)
+  order = order.filter((entry) => entry !== id)
+  if (focused === id) focused = order[order.length - 1] ?? null
+  repaintStack()
+  if (focused) pins.get(focused)?.view.host.focus({ preventScroll: true })
+}
+
+/** Restores the most recently dismissed pin, if the window has not passed. */
+export async function undoDismiss(now = Date.now()): Promise<boolean> {
+  if (!lastDismissed || now - lastDismissed.at > DISMISS_UNDO_MS) return false
+  const { source, rect, opacity } = lastDismissed
+  lastDismissed = null
+  return await addPin(source, { rect, opacity })
+}
+
+/** Moves focus between pins, so a pin is reachable without a pointer. */
+export function cycleFocus(direction: 1 | -1 = 1): boolean {
+  if (order.length === 0) return false
+  const at = focused ? order.indexOf(focused) : -1
+  // The doubled length keeps the modulo positive when arrowing backwards from
+  // the first pin, which is the wrap a focus ring is expected to have.
+  const next = order[(at + direction + order.length * 2) % order.length]
+  if (!next) return false
+  focused = next
+  repaintStack()
+  pins.get(next)?.view.host.focus({ preventScroll: true })
+  return true
+}
+
+export interface AddPinOptions {
+  /** Restores an exact position, used by undo and by crop. */
+  readonly rect?: PinRect | undefined
+  readonly opacity?: number | undefined
+}
+
+export async function addPin(blob: Blob, options: AddPinOptions = {}): Promise<boolean> {
+  const probe = await createImageBitmap(blob)
+  const natural: Size = { width: probe.width, height: probe.height }
+  probe.close()
+
+  const size = options.rect
+    ? { width: options.rect.width, height: options.rect.height }
+    : clampPinSize(natural, Math.min(1, DEFAULT_WIDTH_PX / natural.width))
 
   // Refuse rather than risk a renderer OOM, which the user experiences as
   // "Chrome crashed" and never attributes to us (R-10).
-  if (pins.length >= MAX_PINS_PER_TAB || !withinMemoryBudget([...currentSizes(), size], 1)) {
+  const sizes = [...[...pins.values()].map((pin) => pin.rect), size]
+  if (pins.size >= MAX_PINS_PER_TAB || !withinMemoryBudget(sizes, 1)) {
     console.warn(`[Hotshot] pin refused: at most ${MAX_PINS_PER_TAB} pins per tab.`)
     return false
   }
 
-  const origin = cascadeOrigin(pins.length)
-  const host = document.createElement('div')
-  host.setAttribute(HOTSHOT_HOST_ATTRIBUTE, '')
-  host.setAttribute('role', 'dialog')
-  host.setAttribute('aria-label', 'Hotshot pinned capture')
-  host.tabIndex = 0
+  // Rendered down through a mipmap chain: a pin's whole job is to stay
+  // legible, and a single-step browser downscale is what makes it not.
+  const url = URL.createObjectURL(await renderPinImage(blob, displaySizeFor(natural)))
 
-  Object.assign(host.style, {
-    position: 'fixed',
-    left: `${origin.x}px`,
-    top: `${origin.y}px`,
-    width: `${size.width}px`,
-    height: `${size.height}px`,
-    zIndex: '2147483645',
-    cursor: 'grab',
-    // The rule pair, drawn at full strength even in ghost mode: a faded
-    // outline is how a ghost becomes lost furniture.
-    boxShadow: `0 0 0 1px ${RULE_INNER}, 0 0 0 2px ${RULE_OUTER}, 0 2px 8px rgba(0,0,0,.18)`,
-    borderRadius: '2px',
-    overflow: 'hidden',
-    background: '#171716',
-  })
-
-  const url = URL.createObjectURL(blob)
-  const image = document.createElement('img')
-  Object.assign(image.style, {
-    display: 'block',
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    pointerEvents: 'none',
-  })
-  image.src = url
-  image.alt = ''
-  host.append(image)
-
-  if (displayFormFor(size) === 'chip') {
-    // Below the legibility threshold Hotshot changes form rather than
-    // rendering an illegible smear.
-    image.style.display = 'none'
-    Object.assign(host.style, { width: '104px', height: '28px' })
-    const chip = document.createElement('span')
-    Object.assign(chip.style, {
-      display: 'grid',
-      placeItems: 'center',
-      height: '100%',
-      color: '#F7F7F5',
-      font: '500 11px/1 "IBM Plex Mono", ui-monospace, monospace',
-    })
-    chip.textContent = 'capture'
-    host.append(chip)
+  const id = `pin${Date.now()}${Math.random().toString(36).slice(2, 6)}`
+  const view = buildPinView(url)
+  const origin = options.rect ?? cascadeOrigin(pins.size)
+  const pin: Pin = {
+    id,
+    view,
+    natural,
+    url,
+    source: blob,
+    rect: { x: origin.x, y: origin.y, width: size.width, height: size.height },
+    opacity: options.opacity ?? 1,
   }
 
-  const pin: Pin = { host, size, opacity: 1 }
-  pins.push(pin)
+  pins.set(id, pin)
+  order = [...order, id]
+  focused = id
 
-  let dragging = false
-  let offsetX = 0
-  let offsetY = 0
+  bindPinGestures({
+    view,
+    natural,
+    rect: () => pin.rect,
+    place(rect) {
+      pin.rect = rect
+      view.place(rect)
+    },
+    opacity: () => pin.opacity,
+    setOpacity(level) {
+      pin.opacity = level
+      view.setOpacity(level)
+    },
+    viewport,
 
-  host.addEventListener('pointerdown', (event) => {
-    dragging = true
-    host.setPointerCapture(event.pointerId)
-    host.style.cursor = 'grabbing'
-    const box = host.getBoundingClientRect()
-    offsetX = event.clientX - box.left
-    offsetY = event.clientY - box.top
-    // Last-focused sits on top.
-    host.style.zIndex = String(2147483645)
-    host.style.boxShadow = `0 0 0 1px ${FLARE}, 0 0 0 2px ${RULE_OUTER}, 0 4px 14px rgba(0,0,0,.24)`
+    bringToFront() {
+      focused = id
+      order = restack(order, id, 'front')
+      repaintStack()
+    },
+    restack(move) {
+      order = restack(order, id, move)
+      repaintStack()
+    },
+    cycleFocus,
+    dismiss: () => removePin(id),
+
+    applyCrop(selection, region) {
+      void (async () => {
+        try {
+          const cropped = await cropBlob(pin.source, region)
+          // Sized to the marquee the user drew, not to the source region: the
+          // pin stays where it was and the same size on screen it was cropped
+          // at. Using the source size made a crop of a downscaled pin jump to
+          // the capture's own resolution.
+          const rect = {
+            x: pin.rect.x + selection.x,
+            y: pin.rect.y + selection.y,
+            width: Math.round(selection.width),
+            height: Math.round(selection.height),
+          }
+          // Replaces this pin rather than adding one: a crop changes the
+          // reference you are keeping, it does not create a second one.
+          removePin(id, { silent: true })
+          await addPin(cropped, {
+            rect: { ...rect, ...clampPinPosition(rect, viewport()) },
+            opacity: pin.opacity,
+          })
+        } catch (error: unknown) {
+          // A swallowed rejection here is the worst outcome: the user drags a
+          // marquee and nothing happens, with no reason given.
+          console.error(
+            `[Hotshot] the pin could not be cropped: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          )
+        }
+      })()
+    },
   })
 
-  host.addEventListener('pointermove', (event) => {
-    if (!dragging) return
-    host.style.left = `${event.clientX - offsetX}px`
-    host.style.top = `${event.clientY - offsetY}px`
-  })
-
-  host.addEventListener('pointerup', (event) => {
-    dragging = false
-    host.releasePointerCapture(event.pointerId)
-    host.style.cursor = 'grab'
-    host.style.boxShadow = `0 0 0 1px ${RULE_INNER}, 0 0 0 2px ${RULE_OUTER}, 0 2px 8px rgba(0,0,0,.18)`
-  })
-
-  host.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape' || event.key === 'Delete' || event.key === 'Backspace') {
-      event.preventDefault()
-      remove()
-      return
-    }
-    // `O` cycles opacity. Ghost mode drops the IMAGE, never the rule.
-    if (event.code === 'KeyO') {
-      event.preventDefault()
-      pin.opacity = nextOpacity(pin.opacity)
-      image.style.opacity = String(pin.opacity)
-      host.style.pointerEvents = pin.opacity <= 0.25 ? 'none' : 'auto'
-      return
-    }
-    const step = event.shiftKey ? 10 : 1
-    const moves: Record<string, [number, number]> = {
-      ArrowLeft: [-step, 0],
-      ArrowRight: [step, 0],
-      ArrowUp: [0, -step],
-      ArrowDown: [0, step],
-    }
-    const move = moves[event.key]
-    if (move) {
-      event.preventDefault()
-      host.style.left = `${host.offsetLeft + move[0]}px`
-      host.style.top = `${host.offsetTop + move[1]}px`
-    }
-  })
-
-  function remove(): void {
-    URL.revokeObjectURL(url)
-    host.remove()
-    const index = pins.indexOf(pin)
-    if (index !== -1) pins.splice(index, 1)
+  // A window resize can leave a pin off-screen, which makes it unrecoverable.
+  const onResize = (): void => {
+    pin.rect = { ...pin.rect, ...clampPinPosition(pin.rect, viewport()) }
+    view.place(pin.rect)
   }
+  window.addEventListener('resize', onResize)
 
-  document.documentElement.append(host)
-  host.focus({ preventScroll: true })
+  view.place(pin.rect)
+  view.setOpacity(pin.opacity)
+  document.documentElement.append(view.host)
+  repaintStack()
+  view.host.focus({ preventScroll: true })
   return true
 }
+
+export { GHOST_OPACITY }

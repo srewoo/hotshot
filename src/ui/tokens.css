@@ -81,6 +81,10 @@ button:hover { border-color: var(--hs-g-300); }
 button.primary { background: var(--hs-flare); border-color: var(--hs-flare); color: #fff; }
 button:focus-visible { outline: 2px solid var(--hs-flare); outline-offset: 2px; }
 
+/* Form controls follow the accent rather than the browser default blue, which
+   is the one colour in the product that is not ours. */
+input[type="checkbox"], input[type="radio"] { accent-color: var(--hs-flare); width: 15px; height: 15px; }
+
 input, select {
   font: 400 12px/1 var(--hs-sans);
   color: var(--hs-ink); background: var(--hs-surface);

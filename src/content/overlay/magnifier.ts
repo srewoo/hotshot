@@ -24,7 +24,11 @@ const GAP = 18
  * blur a loupe exists to eliminate.
  */
 export function sourceRectFor(cursor: Point, scale: ScaleFactors): CssRect {
-  const factor = scale.zoom * scale.dpr
+  // `dpr` alone, for the reason documented in `device-rect.ts`: Chrome folds
+  // browser zoom into `devicePixelRatio`, so multiplying by zoom as well
+  // sampled the backdrop half again too far across at 150% and showed the
+  // user a magnified view of pixels they were not pointing at.
+  const factor = scale.dpr
   const half = Math.floor(SOURCE_SPAN_PX / 2)
   return {
     x: Math.max(0, Math.round(cursor.x * factor) - half),

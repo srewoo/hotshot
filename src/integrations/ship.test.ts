@@ -27,6 +27,8 @@ function deps(overrides: Partial<ShipDeps> = {}): ShipDeps {
     provider: {
       testConnection: vi.fn(async () => ok({ accountId: 'a', displayName: 'Sam' })),
       attachImage: vi.fn(async () => ok({ id: 'att-1' })),
+      // Shipping never searches; present only to satisfy the seam.
+      searchTargets: vi.fn(async () => ok([])),
     },
     settings: DEFAULT_SETTINGS,
     rememberTarget: vi.fn(async () => undefined),
@@ -71,6 +73,7 @@ describe('shipCapture', () => {
       provider: {
         testConnection: vi.fn(async () => ok({ accountId: 'a', displayName: 'Sam' })),
         attachImage: vi.fn(async () => err({ kind: 'not-found' as const, message: 'gone' })),
+        searchTargets: vi.fn(async () => ok([])),
       },
     })
     await shipCapture('jira', { key: 'GONE-1' }, png, facts, d)
@@ -102,6 +105,7 @@ describe('shipCapture', () => {
         attachImage: vi.fn(async () =>
           err({ kind: 'not-found' as const, message: 'Invite the integration to that page.' }),
         ),
+        searchTargets: vi.fn(async () => ok([])),
       },
     })
     const result = await shipCapture('notion', { key: 'p1' }, png, facts, d)
@@ -139,5 +143,67 @@ describe('auto-context (FR-17)', () => {
     })
     const result = await shipCapture('jira', { key: 'A-1' }, png, facts, d)
     expect(isOk(result) && result.value.context).toEqual([])
+  })
+})
+
+describe('share links (FR-20)', () => {
+  test('builds a real Jira URL when the site is known', async () => {
+    // The share link with no backend: the destination hosts it, not us.
+    const result = await shipCapture('jira', { key: 'ABC-412' }, png, facts, {
+      ...deps(),
+      linkContext: { jiraSite: 'acme.atlassian.net' },
+    })
+    expect(isOk(result) && result.value.url).toBe('https://acme.atlassian.net/browse/ABC-412')
+  })
+
+  test('returns the bare key rather than a link that goes nowhere', async () => {
+    // Without the site there is no URL to build; a plausible-looking broken
+    // link is worse than an honest key.
+    const result = await shipCapture('jira', { key: 'ABC-412' }, png, facts, deps())
+    expect(isOk(result) && result.value.url).toBe('ABC-412')
+  })
+
+  test('builds a ClickUp task URL', async () => {
+    const result = await shipCapture('clickup', { key: 'abc123' }, png, facts, deps())
+    expect(isOk(result) && result.value.url).toBe('https://app.clickup.com/t/abc123')
+  })
+
+  test('strips dashes from a Notion page id, as Notion URLs require', async () => {
+    const result = await shipCapture(
+      'notion',
+      { key: '2a1509b1-9e06-8000-b573-cf3c13abc281' },
+      png,
+      facts,
+      deps(),
+    )
+    expect(isOk(result) && result.value.url).toBe(
+      'https://www.notion.so/2a1509b19e068000b573cf3c13abc281',
+    )
+  })
+})
+
+describe('the uploaded filename follows the bytes', () => {
+  test('a PNG keeps its .png suffix', async () => {
+    const d = deps()
+    await shipCapture('jira', { key: 'ABC-1' }, png, facts, d)
+    const attach = d.provider.attachImage as unknown as {
+      mock: { calls: Array<[unknown, Blob, string]> }
+    }
+    expect(attach.mock.calls[0]?.[2]).toMatch(/\.png$/)
+  })
+
+  /**
+   * A capture compressed to JPEG to fit an attachment limit must not be
+   * uploaded named `.png` — that is how a service refuses or mis-renders a
+   * perfectly good image.
+   */
+  test('a JPEG is renamed, because it is no longer a PNG', async () => {
+    const d = deps()
+    const jpeg = new Blob([new Uint8Array([1, 2, 3])], { type: 'image/jpeg' })
+    await shipCapture('jira', { key: 'ABC-1' }, jpeg, facts, d)
+    const attach = d.provider.attachImage as unknown as {
+      mock: { calls: Array<[unknown, Blob, string]> }
+    }
+    expect(attach.mock.calls[0]?.[2]).toMatch(/\.jpg$/)
   })
 })

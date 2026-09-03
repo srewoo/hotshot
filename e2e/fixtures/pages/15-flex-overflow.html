@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Flex overflow</title>
+<style>body{margin:0;font:14px system-ui}</style></head><body>
+<div style="padding:30px;display:flex;gap:12px;width:360px;overflow:hidden">
+  <div id="chip-a" style="flex:0 0 200px;height:60px;background:#ddd;padding:10px">A</div>
+  <div id="chip-b" style="flex:0 0 200px;height:60px;background:#cce;padding:10px">B (clipped)</div>
+</div>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[
+ {"x":100,"y":60,"expect":"#chip-a","why":"flex children report their own boxes"},
+ {"x":300,"y":60,"expect":"#chip-b","why":"a clipped element still reports its full layout box, not the visible part"}
+]</script></body></html>

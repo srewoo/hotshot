@@ -11,7 +11,7 @@ a rejection over a missing justification costs another two.
 **Name:** Hotshot
 
 **Short description** (132 char max):
-> Exact screenshots of anything on a page. Annotate, pin, and send to Jira, Notion or ClickUp. Nothing leaves your machine.
+> Exact screenshots of anything on a page. Annotate, pin, record, and send anywhere. Nothing leaves your machine.
 
 **Category:** Productivity · **Language:** English
 
@@ -32,16 +32,34 @@ no page to read.
 
 **Mark it up without leaving the page**
 Arrows, boxes, ellipses, freehand, text, highlight, and numbered step badges
-that renumber themselves when you delete one. Redaction removes the pixels —
-it is not a blur that can be undone.
+that renumber themselves when you delete one. Every mark stays editable — click
+to select, drag to move, resize from a corner, recolour with a number key.
+Redaction removes the pixels; it is not a blur that can be undone.
+
+**Save it as what you need**
+PNG for fidelity, JPG when the bytes matter, or a paged PDF — a long full-page
+capture becomes a document you can print, not one absurdly tall sheet.
 
 **Pin it to the page**
 Keep a capture on screen while you write the bug report next to it. Drag it,
 fade it, and see through it to the form underneath.
 
 **Send it somewhere useful**
-Copy, download, or send straight to a Jira issue, a Notion page, or a ClickUp
-task — with the page URL, title and viewport size already attached.
+Copy, download, or send straight to Jira, Linear, ClickUp, Asana, Trello,
+Notion, Slack or Dropbox — with the page URL, title and viewport size already
+attached. Search your own issues, tasks and channels from the capture: no
+switching to another tab to look up a ticket number.
+
+**Record when a picture is not enough**
+Screen recording to WebM, or a GIF for a pull request. Pause and resume, trim
+the ends before you save, and add tab audio, a microphone voice-over or a
+camera bubble. Recording is encoded on your machine like everything else —
+there is no upload and no share link.
+
+**A library that remembers**
+Your recent captures, searchable by title, site, tag or where you sent them.
+Favourite the ones worth keeping, re-open one in the editor, pin it onto the
+page you are on, or export the lot as a single file.
 
 **Privacy is the architecture, not a policy page**
 Hotshot has no server. No account, no sign-up, no analytics, no crash
@@ -52,8 +70,11 @@ to connect. The source is public: you can verify every claim on this page.
 ### What Hotshot does not do
 - It cannot capture outside the browser — use your OS shortcut for that
 - It cannot capture Chrome's own pages, the Web Store, or the built-in PDF viewer
-- It does not record video (yet)
-- It does not host your images or give you a share link
+- It does not host your images, give you a share link, or transcribe anything —
+  all three would need a server, and Hotshot does not have one
+- It cannot send to GitHub, Google Drive or Microsoft Teams. GitHub has no API
+  that accepts an image attachment, and Drive and Teams require OAuth rather
+  than the tokens this version uses. Named here rather than half-shipped.
 
 ---
 
@@ -78,7 +99,14 @@ Paste each verbatim into the corresponding field.
 > Chrome sync, so a token is never copied to Google's servers.
 
 **`downloads`**
-> Saves the screenshot to your Downloads folder when you choose to download it.
+> Saves the screenshot or recording to your Downloads folder when you choose to
+> save it.
+
+**`unlimitedStorage`**
+> Your capture library is stored on this device as image files in the browser's
+> own database. Without this permission Chrome may delete them when disk space
+> is tight, which would lose captures you had kept deliberately. It grants no
+> access to anything outside Hotshot's own storage.
 
 **`offscreen`**
 > Full-page capture stitches many screenshots onto one canvas. That work needs a
@@ -90,10 +118,20 @@ Paste each verbatim into the corresponding field.
 > to run on, Hotshot tells you why. A keyboard shortcut does not open the popup,
 > so a notification is the only way to explain rather than silently doing nothing.
 
-**Optional host permissions** (`*.atlassian.net`, `api.notion.com`, `api.clickup.com`)
+**Optional host permissions** (Atlassian, Notion, ClickUp, Slack, Linear,
+Trello, Asana, Dropbox)
 > Requested only when you connect that specific service, never at install. Each
-> is used solely to upload a screenshot you explicitly chose to send there. If
-> you disconnect a service, Hotshot hands the permission back.
+> is used solely to look up your own items in that service and to upload a
+> screenshot you explicitly chose to send there. If you disconnect a service,
+> Hotshot hands the permission back. Hotshot never requests permission to read
+> all your websites.
+
+**Camera and microphone**
+> Not manifest permissions: they are requested by the browser, at the moment
+> you turn them on for a recording, and only then. Both default to off, they
+> are chosen per recording rather than remembered, and the audio and video are
+> composited and encoded on your own machine — there is nowhere for them to be
+> sent, because Hotshot has no server.
 
 **Remote code:** No. All code is bundled in the package. Hotshot loads no
 script, stylesheet, font or asset from any remote origin at runtime.
@@ -103,6 +141,13 @@ script, stylesheet, font or asset from any remote origin at runtime.
 ## Single purpose statement
 
 > Hotshot captures, annotates, and delivers screenshots of web pages.
+
+If review pushes back on the destinations as a second purpose, the fuller
+answer — drafted in PRD §11 rather than at submission time — is:
+
+> Hotshot captures images of web pages. Annotating a capture and sending it to
+> a destination are part of capturing it; the extension does nothing unrelated
+> to producing a screenshot.
 
 ---
 
@@ -136,8 +181,15 @@ Publish at the repository, and link it from the listing.
 > **What leaves your device:** nothing, unless you explicitly send a capture to
 > a service you have connected. In that case the image and the context fields
 > you enabled are sent directly from your browser to that service's own API —
-> Jira, Notion, or ClickUp — using the token you provided. The data is then
-> handled under that service's privacy policy, not this one.
+> Jira, Linear, ClickUp, Asana, Trello, Notion, Slack or Dropbox — using the
+> token you provided. The data is then handled under that service's privacy
+> policy, not this one. When you search your own issues or channels from the
+> capture, that search also goes directly to that service and its results are
+> cached on this device for one minute.
+>
+> **Recordings, including microphone and camera:** captured, composited and
+> encoded entirely on your device, and saved to your Downloads folder. They are
+> never uploaded, never transcribed, and never given a share link.
 >
 > **Incognito:** captures taken in an Incognito window are never written to
 > history.
@@ -153,25 +205,37 @@ Publish at the repository, and link it from the listing.
 ## Assets checklist
 
 - [x] Icons: 16, 32, 48, 128 px
-- [ ] Screenshots: 1280×800, at least one, up to five — **outstanding**
-- [ ] Small promo tile 440×280 — **outstanding**
+- [x] Screenshots: 1280×800 — generated by `node scripts/store-assets.mjs` from
+      the REAL `dist/` build, so nothing in the listing shows a feature the
+      package does not have
+- [x] Small promo tile 440×280 — same script
 - [ ] Demo video — optional, but element capture demonstrates in about eight
       seconds and is the whole pitch
 
-**Suggested screenshots, in this order:**
+**Screenshots, in this order:**
 1. Element capture mid-hover, exact bounds highlighted on a real card
 2. The annotation toolbar with numbered badges over a screenshot
 3. A pin sitting beside a half-filled bug-report form
-4. The destination strip sending to Jira
+4. The destination strip searching for an issue by name
 5. Settings, showing "Not connected" and the local-storage note
 
 ---
 
 ## Pre-submission checks
 
-- [ ] `npm run verify` passes (362 unit, 22 E2E, typecheck, budgets)
+- [ ] `npm run verify` passes — typecheck, unit suite, E2E suite, both size budgets
 - [ ] Version in `package.json` bumped — the manifest reads it, so they cannot drift
 - [ ] Console clean on every extension page (covered by an E2E test)
 - [ ] `npm audit` reports zero vulnerabilities
-- [ ] **Notion connector verified against the live API** — PRD R-1 is still open;
-      ship Notion as beta, or not at all, until the spike passes
+- [ ] **Connectors verified against their live APIs.** Every client here is
+      written from published API shapes and tested against a stub, which proves
+      the request SHAPE and not that the service accepts it. Each one carries a
+      `VERIFY` note saying so. Jira, Notion and ClickUp were the original three;
+      Slack, Linear, Trello, Asana and Dropbox have never met a live account.
+      Ship the unverified ones behind a "beta" label, or not at all, until each
+      has been exercised once by hand.
+- [ ] **Recording on a page with a restrictive Permissions-Policy.** Camera and
+      microphone are requested from the content script, which runs in the
+      page's origin — a site sending `Permissions-Policy: camera=()` can refuse
+      them. The recorder degrades to screen-only and warns, but the behaviour
+      should be seen once before the listing promises a camera bubble.

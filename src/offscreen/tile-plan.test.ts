@@ -16,15 +16,17 @@ import {
 
 describe('planTiles', () => {
   test('plans a single tile for a page that fits the viewport', () => {
-    expect(planTiles({ documentHeight: 800, viewportHeight: 800 })).toEqual([{ index: 0, scrollY: 0 }])
+    expect(planTiles({ documentHeight: 800, viewportHeight: 800 })).toEqual([
+      { index: 0, scrollY: 0, offsetCssPx: 0 },
+    ])
   })
 
   test('plans one tile per viewport for an exact multiple', () => {
     const tiles = planTiles({ documentHeight: 2400, viewportHeight: 800 })
     expect(tiles).toEqual([
-      { index: 0, scrollY: 0 },
-      { index: 1, scrollY: 800 },
-      { index: 2, scrollY: 1600 },
+      { index: 0, scrollY: 0, offsetCssPx: 0 },
+      { index: 1, scrollY: 800, offsetCssPx: 800 },
+      { index: 2, scrollY: 1600, offsetCssPx: 1600 },
     ])
   })
 
@@ -33,7 +35,7 @@ describe('planTiles', () => {
     expect(tiles).toHaveLength(3)
     // The last tile is pinned to the document bottom rather than overscrolling,
     // so it overlaps the previous one instead of capturing blank space.
-    expect(tiles[2]).toEqual({ index: 2, scrollY: 1200 })
+    expect(tiles[2]).toEqual({ index: 2, scrollY: 1200, offsetCssPx: 1200 })
   })
 
   test('never plans zero tiles for a non-empty page', () => {
@@ -110,5 +112,95 @@ describe('progressFrom', () => {
 
   test('never reports a negative estimate', () => {
     expect(progressFrom({ captured: 20, total: 14, elapsedMs: 9_000 }).etaMs).toBe(0)
+  })
+})
+
+describe('planTiles over a bounded band (FR-5)', () => {
+  test('captures only the band, not the whole document', () => {
+    // A 3,000px element starting 5,000px down a 20,000px page.
+    const tiles = planTiles({
+      documentHeight: 20_000,
+      viewportHeight: 1_000,
+      band: { top: 5_000, height: 3_000 },
+    })
+    expect(tiles).toHaveLength(3)
+    expect(tiles.map((t) => t.scrollY)).toEqual([5_000, 6_000, 7_000])
+  })
+
+  test('offsets are relative to the band, so the stitch starts at its top', () => {
+    const tiles = planTiles({
+      documentHeight: 20_000,
+      viewportHeight: 1_000,
+      band: { top: 5_000, height: 3_000 },
+    })
+    expect(tiles.map((t) => t.offsetCssPx)).toEqual([0, 1_000, 2_000])
+  })
+
+  test('a band shorter than the viewport is a single tile', () => {
+    const tiles = planTiles({
+      documentHeight: 9_000,
+      viewportHeight: 800,
+      band: { top: 400, height: 300 },
+    })
+    expect(tiles).toEqual([{ index: 0, scrollY: 400, offsetCssPx: 0 }])
+  })
+
+  /**
+   * The case that makes negative offsets necessary. A band at the very bottom
+   * of a page cannot be scrolled to its own top — the page runs out of scroll
+   * — so the tile contains content ABOVE the band, and the stitcher clips it
+   * by drawing at a negative offset instead of misaligning the whole capture.
+   */
+  test('a band against the page bottom clips from above rather than misaligning', () => {
+    const tiles = planTiles({
+      documentHeight: 2_000,
+      viewportHeight: 800,
+      band: { top: 1_500, height: 500 },
+    })
+    expect(tiles).toEqual([{ index: 0, scrollY: 1_200, offsetCssPx: -300 }])
+  })
+
+  test('later tiles of a band at the bottom clamp to the maximum scroll', () => {
+    const tiles = planTiles({
+      documentHeight: 3_000,
+      viewportHeight: 1_000,
+      band: { top: 1_800, height: 1_200 },
+    })
+    expect(tiles.map((t) => t.scrollY)).toEqual([1_800, 2_000])
+    expect(tiles.map((t) => t.offsetCssPx)).toEqual([0, 200])
+  })
+
+  test('an omitted band is exactly the old whole-document behaviour', () => {
+    const metrics = { documentHeight: 8_000, viewportHeight: 800 }
+    const whole = planTiles(metrics)
+    const explicit = planTiles({ ...metrics, band: { top: 0, height: 8_000 } })
+    expect(explicit).toEqual(whole)
+    expect(whole.every((t) => t.offsetCssPx === t.scrollY)).toBe(true)
+  })
+
+  test('every tile of a band covers it end to end, with no gap', () => {
+    const viewportHeight = 700
+    const band = { top: 2_345, height: 2_600 }
+    const tiles = planTiles({ documentHeight: 40_000, viewportHeight, band })
+    // Each tile must start no lower than the previous tile's bottom edge.
+    for (const [i, tile] of tiles.entries()) {
+      if (i === 0) continue
+      const previousBottom = (tiles[i - 1] as { offsetCssPx: number }).offsetCssPx + viewportHeight
+      expect(tile.offsetCssPx).toBeLessThanOrEqual(previousBottom)
+    }
+    const last = tiles[tiles.length - 1] as { offsetCssPx: number }
+    expect(last.offsetCssPx + viewportHeight).toBeGreaterThanOrEqual(band.height)
+  })
+
+  test.each([
+    [{ top: -1, height: 100 }, 'top'],
+    [{ top: 0, height: 0 }, 'height'],
+    [{ top: 0, height: -5 }, 'height'],
+    [{ top: Number.NaN, height: 100 }, 'top'],
+    [{ top: 0, height: Number.POSITIVE_INFINITY }, 'height'],
+  ])('refuses a nonsense band %j', (band, field) => {
+    expect(() => planTiles({ documentHeight: 9_000, viewportHeight: 800, band })).toThrow(
+      new RegExp(field),
+    )
   })
 })

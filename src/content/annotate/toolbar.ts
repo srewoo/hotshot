@@ -1,5 +1,6 @@
 import { el, TOKENS } from '../overlay/overlay-chrome'
 import type { AnnotationTool } from './command-list'
+import type { ExportKind } from './export-image'
 
 /**
  * The annotation toolbar (DESIGN §3.2, PRD FR-7/FR-10/FR-11).
@@ -43,16 +44,32 @@ export const PALETTE: readonly string[] = [
 
 export const WEIGHTS: readonly number[] = [2, 4, 7]
 
+/**
+ * Export kinds offered on the bar (FR-39, "better export options").
+ *
+ * Three, not a menu: PNG for fidelity, JPG when a destination or a colleague
+ * cares about bytes, PDF when the capture is a document — a long stitch that
+ * someone is going to print or file.
+ */
+export const EXPORT_KINDS: ReadonlyArray<{ kind: ExportKind; label: string; title: string }> = [
+  { kind: 'png', label: 'PNG', title: 'Lossless (⏎ downloads the selected kind)' },
+  { kind: 'jpeg', label: 'JPG', title: 'Smaller file, slight quality loss' },
+  { kind: 'pdf', label: 'PDF', title: 'Paged document — a long capture becomes several pages' },
+]
+
 export interface ToolbarState {
   tool: AnnotationTool
   color: string
   weight: number
+  /** What ⏎ and the download button produce (FR-39). */
+  exportKind: ExportKind
 }
 
 export interface Toolbar {
   readonly element: HTMLDivElement
   setTool(tool: AnnotationTool): void
   setColor(color: string): void
+  setExportKind(kind: ExportKind): void
   position(selection: DOMRect, viewport: { width: number; height: number }): void
 }
 
@@ -140,6 +157,36 @@ export function buildToolbar(
 
   bar.append(divider())
 
+  const exportButtons = new Map<ExportKind, HTMLButtonElement>()
+  for (const spec of EXPORT_KINDS) {
+    const button = el('button', {
+      height: '22px',
+      padding: '0 6px',
+      border: '0',
+      borderRadius: '3px',
+      background: 'transparent',
+      color: TOKENS.graphite25,
+      font: `500 10px/1 ${TOKENS.mono}`,
+      cursor: 'pointer',
+    })
+    button.textContent = spec.label
+    button.title = spec.title
+    button.type = 'button'
+    button.addEventListener('click', () => onChange({ exportKind: spec.kind }))
+    exportButtons.set(spec.kind, button)
+    bar.append(button)
+  }
+
+  function setExportKind(kind: ExportKind): void {
+    for (const [key, button] of exportButtons) {
+      const active = key === kind
+      button.style.background = active ? TOKENS.flare : 'transparent'
+      button.style.color = active ? '#FFFFFF' : TOKENS.graphite25
+    }
+  }
+
+  bar.append(divider())
+
   // Destinations carry no bare letter (FR-44): the commit ladder owns them.
   for (const [label, action, title] of [
     ['⧉', 'copy', 'Copy (⇧⌘C)'],
@@ -168,11 +215,13 @@ export function buildToolbar(
 
   setTool(state.tool)
   setColor(state.color)
+  setExportKind(state.exportKind)
 
   return {
     element: bar,
     setTool,
     setColor,
+    setExportKind,
     /** Docks below the selection, flips above, and never covers it (DESIGN §3.2). */
     position(selection, viewport) {
       const below = selection.bottom + GAP

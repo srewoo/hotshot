@@ -3,6 +3,11 @@ import type { ProviderId, TokenRepo } from '../storage/token-repo'
 import { createJiraProvider } from './jira/client'
 import { createNotionProvider } from './notion/client'
 import { createClickUpProvider } from './clickup/client'
+import { createSlackProvider } from './slack/client'
+import { createLinearProvider } from './linear/client'
+import { createTrelloProvider } from './trello/client'
+import { createAsanaProvider } from './asana/client'
+import { createDropboxProvider } from './dropbox/client'
 
 /**
  * Resolves a configured provider (Architecture §4.2).
@@ -43,5 +48,17 @@ export async function resolveProvider(
       return createNotionProvider({ token }, fetchImpl)
     case 'clickup':
       return createClickUpProvider({ token }, fetchImpl)
+    case 'slack':
+      return createSlackProvider({ token }, fetchImpl)
+    case 'linear':
+      return createLinearProvider({ token }, fetchImpl)
+    case 'trello':
+      // The stored secret is `key:token`; the client splits it and refuses
+      // anything else with a message that says so.
+      return createTrelloProvider({ token }, fetchImpl)
+    case 'asana':
+      return createAsanaProvider({ token }, fetchImpl)
+    case 'dropbox':
+      return createDropboxProvider({ token }, fetchImpl)
   }
 }

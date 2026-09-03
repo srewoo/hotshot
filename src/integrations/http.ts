@@ -44,10 +44,16 @@ export async function request(
   try {
     const response = await fetchImpl(url, init)
     if (response.ok) return ok(response)
+
+    // Read the body once, here: a Response can only be consumed once, and a
+    // connector that needs the reason cannot re-read it later.
+    const detail = await response.text().catch(() => '')
+
     return err({
       kind: kindForStatus(response.status),
       status: response.status,
       message: messageFor(response.status),
+      detail: detail.slice(0, 400),
     })
   } catch {
     // The caught value is deliberately not interpolated: a fetch rejection can

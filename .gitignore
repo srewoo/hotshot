@@ -7,3 +7,4 @@ playwright-report
 e2e/harness/bundle.js
 release
 test-results
+store

@@ -1,4 +1,4 @@
-import { buildDestinationBar, type DestinationBar } from './destination-bar'
+import { buildDestinationBar, type DestinationBar, type SearchOutcome } from './destination-bar'
 import type { ProviderId } from '../../storage/token-repo'
 
 /**
@@ -15,18 +15,34 @@ export async function mountDestinations(
     | { configured?: ProviderId[]; remembered?: Partial<Record<ProviderId, string>> }
     | undefined
 
-  const bar = buildDestinationBar(
-    state?.configured ?? [],
-    state?.remembered ?? {},
-    (id, key) => {
+  const bar = buildDestinationBar(state?.configured ?? [], state?.remembered ?? {}, {
+    onSend: (id, key) => {
       if (!key) {
-        bar.setStatus('Enter a key first.', 'error')
+        bar.setStatus('Choose a target, or paste an id.', 'error')
         bar.focusKey()
         return
       }
       handlers.onSend(id, key)
     },
-  )
+
+    /**
+     * FR-41's search, routed through the worker because only it holds tokens.
+     * A transport failure is reported as a search failure rather than thrown:
+     * the picker degrades to id entry and says so.
+     */
+    onSearch: async (id, query) => {
+      try {
+        const reply = (await chrome.runtime.sendMessage({
+          kind: 'destinations/search',
+          provider: id,
+          query,
+        })) as SearchOutcome | undefined
+        return reply ?? { ok: false, candidates: [], message: 'No answer from Hotshot.' }
+      } catch {
+        return { ok: false, candidates: [], message: 'Could not search — paste an id instead.' }
+      }
+    },
+  })
 
   root.append(bar.element)
   return bar

@@ -16,6 +16,14 @@ export const HISTORY_LIMIT = 20
 
 export type Retention = 'session' | '7d' | '30d'
 
+/** Where a capture was sent, so the library can offer to send it again. */
+export interface HistoryDestination {
+  readonly provider: string
+  readonly key: string
+  /** Deep link to the created or updated item, when the service gave one. */
+  readonly url?: string | undefined
+}
+
 export interface HistoryEntry {
   readonly id: string
   readonly capturedAt: number
@@ -26,6 +34,18 @@ export interface HistoryEntry {
   readonly bytes: number
   /** Captures taken in an Incognito window are never persisted. */
   readonly incognito: boolean
+  /**
+   * Kept out of the retention sweep.
+   *
+   * A capture worth keeping is worth keeping past seven days, and the
+   * alternative — the user exporting it somewhere else to be safe — defeats
+   * the point of a local library.
+   */
+  readonly favourite?: boolean | undefined
+  /** Local labels. They never leave the machine and are never suggested. */
+  readonly tags?: readonly string[] | undefined
+  /** FR-25's "destination outcome". */
+  readonly destination?: HistoryDestination | null | undefined
 }
 
 /** The storage surface, injected so the rules can be tested without IndexedDB. */
@@ -38,7 +58,9 @@ export interface HistoryStore {
 export interface HistoryRepo {
   record(entry: HistoryEntry): Promise<void>
   list(): Promise<HistoryEntry[]>
-  remove(id: string): Promise<void>
+  remove(ids: readonly string[]): Promise<void>
+  /** Merges a change into one entry: a favourite, a tag, a ship outcome. */
+  update(id: string, patch: Partial<HistoryEntry>): Promise<void>
   prune(olderThan: number): Promise<void>
   clear(): Promise<void>
 }
@@ -72,20 +94,35 @@ export function createHistoryRepo(store: HistoryStore): HistoryRepo {
 
       await store.put(entry)
 
+      // Quota management, at the write path. Favourites are exempt: the cap
+      // exists to bound memory, and a user who marked something is telling us
+      // which twenty to bound.
       const entries = await sorted()
-      if (entries.length > HISTORY_LIMIT) {
-        await store.delete(entries.slice(HISTORY_LIMIT).map((e) => e.id))
+      const evictable = entries.filter((e) => !e.favourite)
+      const overBy = entries.length - HISTORY_LIMIT
+      if (overBy > 0 && evictable.length > 0) {
+        await store.delete(evictable.slice(-overBy).map((e) => e.id))
       }
     },
 
     list: sorted,
 
-    async remove(id) {
-      await store.delete([id])
+    async remove(ids) {
+      if (ids.length > 0) await store.delete(ids)
+    },
+
+    async update(id, patch) {
+      const existing = (await store.all()).find((entry) => entry.id === id)
+      // A patch for an entry that has been pruned is dropped, not resurrected
+      // as a partial row with no capture behind it.
+      if (!existing) return
+      await store.put({ ...existing, ...patch, id: existing.id })
     },
 
     async prune(olderThan) {
-      const stale = (await store.all()).filter((e) => e.capturedAt < olderThan)
+      const stale = (await store.all()).filter(
+        (e) => e.capturedAt < olderThan && !e.favourite,
+      )
       if (stale.length > 0) await store.delete(stale.map((e) => e.id))
     },
 

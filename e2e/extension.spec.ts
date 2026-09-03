@@ -24,13 +24,32 @@ test('the service worker registers', async ({ context, extensionId }) => {
 
 test('the manifest requests no broad host permission', async ({ page, extensionId }) => {
   // The privacy claim in the store listing has to be verifiable, and this is
-  // the assertion that keeps it true as the code changes.
+  // the assertion that keeps it true as the code changes. It checks the
+  // INVARIANT rather than a count: the list grows with every destination, and
+  // a test that counted entries would be edited away the first time it failed.
   await page.goto(`chrome-extension://${extensionId}/manifest.json`)
   const manifest = JSON.parse(await page.locator('body').innerText())
 
   expect(manifest.permissions).not.toContain('<all_urls>')
+  // Nothing is granted at install: every integration host is optional and
+  // requested at token-setup time (FR-23).
   expect(manifest.host_permissions ?? []).toEqual([])
-  expect(manifest.optional_host_permissions).toHaveLength(3)
+
+  const optional: string[] = manifest.optional_host_permissions ?? []
+  expect(optional.length).toBeGreaterThan(0)
+
+  for (const origin of optional) {
+    // HTTPS only, and a named host. A `*://*/*` or a bare `*` here would be
+    // "read all your data on every website" wearing an optional label.
+    expect(origin, `${origin} is not an https origin`).toMatch(/^https:\/\//)
+    const host = origin.slice('https://'.length).split('/')[0] ?? ''
+    expect(host, `${origin} has no host`).not.toBe('*')
+    // A leading `*.` subdomain wildcard is the most that is allowed, and only
+    // because a Jira site lives on the customer's own subdomain.
+    const withoutSubdomainWildcard = host.startsWith('*.') ? host.slice(2) : host
+    expect(withoutSubdomainWildcard, `${origin} is too broad`).not.toContain('*')
+    expect(withoutSubdomainWildcard.split('.').length, `${origin} is too broad`).toBeGreaterThan(1)
+  }
 })
 
 test('the popup offers the capture modes when it cannot read the tab URL', async ({
@@ -191,4 +210,144 @@ test('the content script guards against double injection', async ({ context }) =
   expect(errors).toEqual([])
   expect(await page.evaluate(() => window.__hotshotInjected === true)).toBe(true)
   await page.close()
+})
+
+/**
+ * The two-chunk handshake (PRD §6, `editor-bridge`).
+ *
+ * The fast path ships without the editor, so this is the seam that pulls it
+ * in. If it breaks, every capture still reaches a crop and then has nowhere to
+ * go — a failure worth its own test rather than one implied by the smoke run,
+ * which pre-injects both chunks.
+ */
+test('the worker injects the editor chunk on request', async ({ context, extensionId }) => {
+  const page = await context.newPage()
+  await page.goto(`chrome-extension://${extensionId}/src/ui/library/index.html`)
+
+  const reply = await page.evaluate(
+    async () => await chrome.runtime.sendMessage({ kind: 'inject/editor' }),
+  )
+
+  // An extension page is not a host the extension may script, so injection
+  // fails. What matters is the CONTRACT: the worker always answers, and a
+  // refusal carries a reason. A silent non-reply would hang `loadEditor` and
+  // strand a finished capture with nowhere to go.
+  expect(reply, 'the worker did not answer an injection request').toBeDefined()
+  expect(reply).toMatchObject({ ok: false })
+  expect(String((reply as { error?: string }).error).length).toBeGreaterThan(10)
+  await page.close()
+})
+
+test('the editor chunk registers its API and nothing else', async ({ context }) => {
+  const page = await context.newPage()
+  await page.goto('about:blank')
+  await page.setContent('<body>host</body>')
+
+  const before = await page.evaluate(() => typeof (window as never as Record<string, unknown>).__hotshotEditor)
+  expect(before).toBe('undefined')
+
+  await page.addScriptTag({ path: fileURLToPath(new URL('../dist/editor.js', import.meta.url)) })
+
+  const api = await page.evaluate(() => {
+    const editor = (window as never as Record<string, Record<string, unknown>>).__hotshotEditor
+    return editor ? Object.keys(editor).sort() : null
+  })
+  expect(api, 'the editor chunk registered no API').toEqual([
+    'addPin',
+    'mountRecordBar',
+    'openCapture',
+  ])
+  await page.close()
+})
+
+/**
+ * FR-4's per-capture delay. Previously a delay was configured once in Settings
+ * and then applied to every capture, which is a booby trap: the reason to want
+ * one is true of one capture in fifty.
+ */
+test('the popup offers a per-capture delay and sends the choice', async ({
+  page,
+  extensionId,
+}) => {
+  await page.goto(`chrome-extension://${extensionId}/src/ui/popup/index.html`)
+  await page.waitForLoadState('networkidle')
+
+  const group = page.getByRole('group', { name: 'Capture delay' })
+  await expect(group).toBeVisible()
+  for (const label of ['None', '3s', '5s', '10s']) {
+    await expect(group.getByRole('button', { name: label, exact: true })).toBeVisible()
+  }
+
+  // "None" is the default, so a delay is never on unless it is chosen.
+  await expect(group.getByRole('button', { name: 'None', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+
+  // Capture what the popup sends, rather than letting it drive a real capture.
+  await page.evaluate(() => {
+    const sent: unknown[] = []
+    ;(window as never as Record<string, unknown>).__sent = sent
+    chrome.runtime.sendMessage = ((message: unknown) => {
+      sent.push(message)
+      return Promise.resolve(undefined)
+    }) as typeof chrome.runtime.sendMessage
+    window.close = () => {}
+  })
+
+  await group.getByRole('button', { name: '5s', exact: true }).click()
+  await expect(group.getByRole('button', { name: '5s', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await page.getByRole('button', { name: /Region/ }).click()
+
+  const sent = await page.evaluate(() => (window as never as Record<string, unknown[]>).__sent)
+  expect(sent).toEqual([{ kind: 'popup/capture', mode: 'region', delaySeconds: 5 }])
+})
+
+/**
+ * The recording sources are chosen per recording, and default to nothing
+ * beyond the screen. A microphone that was live because of a decision made
+ * last Tuesday would be a privacy incident dressed as a convenience.
+ */
+test('the popup offers recording sources, all off by default', async ({ page, extensionId }) => {
+  await page.goto(`chrome-extension://${extensionId}/src/ui/popup/index.html`)
+  await page.waitForLoadState('networkidle')
+
+  const group = page.getByRole('group', { name: 'Recording sources' })
+  await expect(group).toBeVisible()
+  await expect(page.getByText('Recording captures screen only')).toBeVisible()
+
+  for (const label of ['Tab audio', 'Mic', 'Camera']) {
+    const toggle = group.getByRole('button', { name: label, exact: true })
+    await expect(toggle).toBeVisible()
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  }
+
+  // Capture what the popup sends rather than starting a real screen share.
+  await page.evaluate(() => {
+    const sent: unknown[] = []
+    ;(window as never as Record<string, unknown>).__sent = sent
+    chrome.runtime.sendMessage = ((message: unknown) => {
+      sent.push(message)
+      return Promise.resolve(undefined)
+    }) as typeof chrome.runtime.sendMessage
+    window.close = () => {}
+  })
+
+  await group.getByRole('button', { name: 'Mic', exact: true }).click()
+  await expect(page.getByText('Recording captures screen + mic')).toBeVisible()
+  await group.getByRole('button', { name: 'Camera', exact: true }).click()
+  await expect(page.getByText('Recording captures screen + mic + camera')).toBeVisible()
+
+  await page.getByRole('button', { name: /Record video/ }).click()
+  const sent = await page.evaluate(() => (window as never as Record<string, unknown[]>).__sent)
+  expect(sent).toEqual([
+    {
+      kind: 'popup/record',
+      mode: 'video',
+      options: { tabAudio: false, microphone: true, webcam: true },
+    },
+  ])
 })

@@ -122,7 +122,7 @@ describe('history repo', () => {
     await repo.record(entry('a', 1))
     await repo.record(entry('b', 2))
 
-    await repo.remove('a')
+    await repo.remove(['a'])
 
     expect((await repo.list()).map((e) => e.id)).toEqual(['b'])
   })

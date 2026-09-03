@@ -70,7 +70,12 @@ export function Settings() {
             </select>
           </div>
           <div class="row">
-            <label for="delay">Delay before capture</label>
+            <label for="delay" style={{ display: 'grid', gap: 2 }}>
+              <span>Delay for keyboard shortcuts</span>
+              <span class="dim" style={{ fontSize: 11 }}>
+                The popup asks per capture; a shortcut cannot, so it uses this.
+              </span>
+            </label>
             <select
               id="delay"
               value={String(delaySeconds)}
@@ -155,6 +160,11 @@ export function Settings() {
         <ServiceBlock id="jira" name="Jira" />
         <ServiceBlock id="clickup" name="ClickUp" />
         <ServiceBlock id="notion" name="Notion" />
+        <ServiceBlock id="linear" name="Linear" />
+        <ServiceBlock id="slack" name="Slack" />
+        <ServiceBlock id="trello" name="Trello" />
+        <ServiceBlock id="asana" name="Asana" />
+        <ServiceBlock id="dropbox" name="Dropbox" />
       </section>
 
       <section style={{ marginTop: 28 }}>

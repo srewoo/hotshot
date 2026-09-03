@@ -1,24 +1,11 @@
-import { renderFilename, DEFAULT_FILENAME_TEMPLATE } from '../../storage/filename'
 import type { DeviceRect } from '../../shared/geometry/device-rect'
 
 /**
  * Cuts the selection out of the frozen backdrop.
  *
- * Runs in the content script so the download begins inside the user's gesture
- * — the same focus rule that governs the clipboard (FR-42).
+ * Stays on the capture fast path. Saving to disk moved to `../download` with
+ * the rest of the editor chunk.
  */
-
-const pad = (n: number): string => String(n).padStart(2, '0')
-
-export function captureFilename(now: Date = new Date()): string {
-  return renderFilename(DEFAULT_FILENAME_TEMPLATE, {
-    title: document.title,
-    host: location.hostname,
-    date: `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`,
-    time: `${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())}`,
-    sequence: 1,
-  })
-}
 
 export async function cropToBitmap(
   backdropDataUrl: string,
@@ -41,14 +28,4 @@ export async function cropToBitmap(
   } finally {
     source.close()
   }
-}
-
-export function downloadBlob(blob: Blob, filename = captureFilename()): void {
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.click()
-  // Revoked on the next task so the download has already taken the URL.
-  setTimeout(() => URL.revokeObjectURL(url), 0)
 }

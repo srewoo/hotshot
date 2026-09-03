@@ -11,8 +11,21 @@ import type { Viewport } from './selection-rect'
 
 export type Veils = readonly [HTMLDivElement, HTMLDivElement, HTMLDivElement, HTMLDivElement]
 
+/**
+ * Dims the whole viewport with ONE layer.
+ *
+ * Not four: they each carry the veil's 44% alpha, so stacking all four at
+ * `inset: 0` composited to ~90% and turned "dimmed" into "nearly black" —
+ * hiding the page the user is about to select from. Geometry is written as
+ * explicit edges rather than `inset` so a later `frameSelection` is never
+ * fighting a leftover shorthand.
+ */
 export function coverAll(veils: Veils): void {
-  for (const veil of veils) Object.assign(veil.style, { inset: '0' })
+  const [cover, ...rest] = veils
+  Object.assign(cover.style, { left: '0', top: '0', width: '100vw', height: '100vh' })
+  for (const veil of rest) {
+    Object.assign(veil.style, { left: '0', top: '0', width: '0px', height: '0px' })
+  }
 }
 
 export function frameSelection(veils: Veils, rect: CssRect, viewport: Viewport): void {

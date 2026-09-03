@@ -143,3 +143,98 @@ describe('numbered badges (FR-8)', () => {
     expect(list.badgeNumbers()).toEqual({ x: 1 })
   })
 })
+
+describe('replace', () => {
+  const moved = (id: string): AnnotationCommand => ({
+    ...arrow(id),
+    points: [
+      { x: 100, y: 100 },
+      { x: 140, y: 160 },
+    ],
+  })
+
+  test('rewrites a mark in place', () => {
+    const list = createCommandList()
+    list.push(arrow('a'))
+    list.replace(moved('a'))
+    expect(list.commands()).toEqual([moved('a')])
+  })
+
+  test('keeps draw order, so an edited mark does not jump to the front', () => {
+    const list = createCommandList()
+    list.push(arrow('a'))
+    list.push(arrow('b'))
+    list.replace(moved('a'))
+    expect(list.commands().map((c) => c.id)).toEqual(['a', 'b'])
+  })
+
+  /**
+   * The reason `replace` exists at all. Remove-then-add would move an edited
+   * badge to the end of the list and silently renumber every badge after it —
+   * FR-8's exact failure, where the screenshot becomes wrong rather than
+   * untidy just because someone nudged a badge.
+   */
+  test('moving a badge does not renumber the sequence', () => {
+    const list = createCommandList()
+    list.push(badge('x'))
+    list.push(badge('y'))
+    list.push(badge('z'))
+    list.replace({ ...badge('x'), points: [{ x: 400, y: 400 }] })
+    expect(list.badgeNumbers()).toEqual({ x: 1, y: 2, z: 3 })
+  })
+
+  test('is undoable, back to the mark as it was drawn', () => {
+    const list = createCommandList()
+    list.push(arrow('a'))
+    list.replace(moved('a'))
+    list.undo()
+    expect(list.commands()).toEqual([arrow('a')])
+    expect(list.canRedo()).toBe(true)
+  })
+
+  test('redo re-applies the edit', () => {
+    const list = createCommandList()
+    list.push(arrow('a'))
+    list.replace(moved('a'))
+    list.undo()
+    list.redo()
+    expect(list.commands()).toEqual([moved('a')])
+  })
+
+  test('successive edits each undo one step, so a drag then a recolour rewinds twice', () => {
+    const list = createCommandList()
+    list.push(arrow('a'))
+    list.replace(moved('a'))
+    list.replace({ ...moved('a'), color: '#1F6FEB' })
+    expect(list.commands()[0]?.color).toBe('#1F6FEB')
+    list.undo()
+    expect(list.commands()[0]?.color).toBe('#FF5A00')
+    list.undo()
+    expect(list.commands()).toEqual([arrow('a')])
+  })
+
+  test('an edit to a mark that was never added is ignored', () => {
+    const list = createCommandList()
+    list.push(arrow('a'))
+    list.replace(moved('ghost'))
+    expect(list.commands()).toEqual([arrow('a')])
+  })
+
+  test('an edit does not resurrect a deleted mark', () => {
+    const list = createCommandList()
+    list.push(arrow('a'))
+    list.remove('a')
+    list.replace(moved('a'))
+    expect(list.commands()).toEqual([])
+  })
+
+  test('a new edit after undo discards the redo branch', () => {
+    const list = createCommandList()
+    list.push(arrow('a'))
+    list.replace(moved('a'))
+    list.undo()
+    list.replace({ ...arrow('a'), weight: 7 })
+    expect(list.canRedo()).toBe(false)
+    expect(list.commands()[0]?.weight).toBe(7)
+  })
+})

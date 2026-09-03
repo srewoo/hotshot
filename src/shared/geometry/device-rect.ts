@@ -1,11 +1,26 @@
 /**
  * The correctness kernel (PRD FR-40).
  *
- *   deviceRect = cssRect × zoom × devicePixelRatio
+ *   deviceRect = cssRect × devicePixelRatio
  *
- * Kept pure and dependency-free so the 18-cell zoom × DPR regression matrix
- * can run without a browser. Both scale factors are sampled once at capture
- * start; a change mid-capture is an abort, never a best-effort crop.
+ * NOT `× zoom × devicePixelRatio`, which is what this module did first and
+ * what FR-40 literally says. In Chrome `window.devicePixelRatio` ALREADY
+ * includes browser zoom, so multiplying by `chrome.tabs.getZoom()` as well
+ * double-counts it: at 150% zoom a crop was scaled 2.25× instead of 1.5× and
+ * read its pixels from far outside the selection.
+ *
+ * Measured, not assumed — `e2e/zoom-scale.spec.ts` sets a real tab to 150%
+ * and observes `devicePixelRatio` 1 → 1.5 with `innerWidth` 1280 → 853. The
+ * two multiply out to the window's true physical width, which is the identity
+ * `captureVisibleTab`'s bitmap obeys. That test is the guard on this file's
+ * whole premise; if it ever fails, this maths is wrong again.
+ *
+ * `zoom` is still carried and still validated: the readout shows it, and a
+ * mid-capture change of either factor is an abort rather than a best-effort
+ * crop. It is simply not a multiplier.
+ *
+ * Kept pure and dependency-free so the zoom × DPR regression matrix can run
+ * without a browser.
  */
 
 export interface CssRect {
@@ -56,7 +71,9 @@ export function toDeviceRect(rect: CssRect, scale: ScaleFactors): DeviceRect {
     throw new RangeError(`rect height must be a non-negative finite number, got ${rect.height}`)
   }
 
-  const factor = scale.zoom * scale.dpr
+  // `dpr` alone: see this module's header. `zoom` is validated above because
+  // a nonsense zoom still means the sample was taken wrong.
+  const factor = scale.dpr
 
   // Round the EDGES, then derive the size. Rounding origin and size
   // independently lets them drift apart and shifts the crop by a pixel at

@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>SVG</title>
+<style>body{margin:0;font:14px system-ui}</style></head><body>
+<div style="padding:30px">
+  <svg id="chart" width="300" height="160" style="border:1px solid #999">
+    <rect id="bar" x="30" y="30" width="80" height="100" fill="#69c"/>
+  </svg>
+</div>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[
+ {"x":100,"y":110,"expect":"#bar","why":"SVG children are real elements with real bounds"}
+]</script></body></html>

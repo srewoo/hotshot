@@ -1,0 +1,12 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Inline elements</title>
+<style>body{margin:0;font:14px system-ui}
+ .tag::before{content:"# ";color:#c00}</style></head><body>
+<p style="padding:30px;width:340px;line-height:2">
+  Some text with <a id="link" href="#" style="padding:4px 6px;background:#eef">an inline link</a>
+  and a <span class="tag" id="tag" style="padding:4px 6px;background:#efe">tag</span> inside.
+</p>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[
+ {"x":170,"y":57,"expect":"#link","why":"an inline link is a real target with its own inline box"},
+ {"x":285,"y":57,"expect":"#tag","why":"a span with a ::before pseudo-element still reports its own box"}
+]</script></body></html>

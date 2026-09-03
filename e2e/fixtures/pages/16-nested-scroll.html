@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Nested scroll</title>
+<style>body{margin:0;font:14px system-ui}</style></head><body>
+<div style="height:300px"></div>
+<div id="outer" style="margin:0 30px;height:180px;overflow:auto;border:1px solid #999">
+  <div style="height:400px;padding:12px">
+    <div id="inner-card" style="margin-top:120px;height:80px;background:#eee;padding:10px">inner card</div>
+  </div>
+</div>
+<div style="height:900px"></div>
+<script>window.scrollTo(0,200); document.getElementById('outer').scrollTop = 100</script>
+<script src="../../harness/bundle.js"></script>
+<script type="application/json" id="probes">[
+ {"x":150,"y":160,"expect":"#inner-card","why":"page scroll and container scroll compose correctly"}
+]</script></body></html>

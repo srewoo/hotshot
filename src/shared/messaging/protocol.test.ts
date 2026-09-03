@@ -91,6 +91,108 @@ describe('parseEnvelope', () => {
     expect(isOk(r) && Object.hasOwn(r.value, 'injected')).toBe(false)
   })
 
+  describe('capture/stitched', () => {
+    const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg=='
+
+    test('accepts a PNG data URL with no partial warning', () => {
+      const r = parseEnvelope({ kind: 'capture/stitched', dataUrl: png, partialWarning: null })
+      expect(isOk(r) && r.value.kind).toBe('capture/stitched')
+    })
+
+    test('accepts a partial stitch and carries its reason', () => {
+      const r = parseEnvelope({
+        kind: 'capture/stitched',
+        dataUrl: png,
+        partialWarning: 'stopped after 4 of 11 tiles',
+      })
+      expect(isOk(r) && r.value.kind === 'capture/stitched' && r.value.partialWarning).toBe(
+        'stopped after 4 of 11 tiles',
+      )
+    })
+
+    /**
+     * The content script fetches this value in the PAGE's origin. A sender
+     * that could substitute an http(s) or blob URL would turn the handoff into
+     * a page-origin request — the one thing the no-backend promise forbids.
+     */
+    test.each([
+      'https://exfiltrate.example/pixel.png',
+      'http://127.0.0.1:9000/x.png',
+      'blob:https://example.com/8a7f',
+      'data:text/html;base64,PHNjcmlwdD4=',
+      'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=',
+      'javascript:alert(1)',
+      '',
+    ])('rejects a dataUrl that is not a PNG data URL: %s', (dataUrl) => {
+      expect(isErr(parseEnvelope({ kind: 'capture/stitched', dataUrl, partialWarning: null }))).toBe(
+        true,
+      )
+    })
+
+    test('rejects a PNG data URL whose payload is not base64', () => {
+      const r = parseEnvelope({
+        kind: 'capture/stitched',
+        dataUrl: 'data:image/png;base64,not base64!',
+        partialWarning: null,
+      })
+      expect(isErr(r)).toBe(true)
+    })
+
+    test('rejects an empty partial warning, which would render as a blank reason', () => {
+      const r = parseEnvelope({ kind: 'capture/stitched', dataUrl: png, partialWarning: '' })
+      expect(isErr(r)).toBe(true)
+    })
+
+    test('requires the partialWarning field rather than defaulting it', () => {
+      expect(isErr(parseEnvelope({ kind: 'capture/stitched', dataUrl: png }))).toBe(true)
+    })
+
+    test('the error names the offending field', () => {
+      const r = parseEnvelope({ kind: 'capture/stitched', dataUrl: 'nope', partialWarning: null })
+      expect(isErr(r) && r.error.issues.join(' ')).toMatch(/dataUrl/)
+    })
+  })
+
+  describe('capture/element-band (FR-5)', () => {
+    const band = { kind: 'capture/element-band', top: 5_000, left: 120, width: 640, height: 2_400 }
+
+    test('accepts an element box', () => {
+      const r = parseEnvelope(band)
+      expect(isOk(r) && r.value.kind).toBe('capture/element-band')
+    })
+
+    test('accepts a band starting at the very top of the document', () => {
+      expect(isOk(parseEnvelope({ ...band, top: 0 }))).toBe(true)
+    })
+
+    /**
+     * `top` is a DOCUMENT offset, so it cannot be negative — a negative one
+     * would mean scrolling above the page, and the stitch would silently start
+     * in the wrong place rather than fail.
+     */
+    test('rejects a negative document offset', () => {
+      expect(isErr(parseEnvelope({ ...band, top: -1 }))).toBe(true)
+    })
+
+    test('allows a negative left, for an element that starts off-screen', () => {
+      expect(isOk(parseEnvelope({ ...band, left: -40 }))).toBe(true)
+    })
+
+    test.each(['width', 'height'])('rejects a zero or negative %s', (field) => {
+      expect(isErr(parseEnvelope({ ...band, [field]: 0 }))).toBe(true)
+      expect(isErr(parseEnvelope({ ...band, [field]: -10 }))).toBe(true)
+    })
+
+    test('rejects a non-numeric measurement rather than coercing it', () => {
+      expect(isErr(parseEnvelope({ ...band, height: '2400' }))).toBe(true)
+    })
+
+    test('the error names the offending field', () => {
+      const r = parseEnvelope({ ...band, width: 0 })
+      expect(isErr(r) && r.error.issues.join(' ')).toMatch(/width/)
+    })
+  })
+
   test('the error names the offending field so a bug is diagnosable', () => {
     const r = parseEnvelope({ kind: 'capture/begin', mode: 'region', tabId: 'seven' })
     expect(isErr(r) && r.error.issues.join(' ')).toMatch(/tabId/)

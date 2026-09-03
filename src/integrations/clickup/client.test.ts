@@ -101,3 +101,79 @@ describe('clickup attachImage', () => {
     expect(isErr(result) && result.error.kind).toBe('network')
   })
 })
+
+/**
+ * FR-41 for ClickUp, which has no search endpoint a personal token can use —
+ * so discovery is teams → tasks, and narrowing happens locally. The tests pin
+ * that the local filter is honest about what it is.
+ */
+describe('searchTargets', () => {
+  const teams = { json: { teams: [{ id: 123 }] } }
+  const tasks = {
+    json: {
+      tasks: [
+        { id: 'abc1', name: 'Login fails', list: { name: 'Bugs' }, status: { status: 'open' } },
+        { id: 'abc2', name: 'Invoice overflow', list: { name: 'Bugs' }, status: { status: 'wip' } },
+      ],
+    },
+  }
+
+  test('lists tasks from the first workspace', async () => {
+    const { fetch, calls } = stubFetch([teams, tasks])
+    const result = await createClickUpProvider(config, fetch).searchTargets('')
+    expect(calls[0]?.url).toContain('/team')
+    expect(calls[1]?.url).toContain('/team/123/task')
+    expect(isOk(result) && result.value).toEqual([
+      { key: 'abc1', title: 'Login fails', hint: 'Bugs · open' },
+      { key: 'abc2', title: 'Invoice overflow', hint: 'Bugs · wip' },
+    ])
+  })
+
+  test('narrows by name locally, because the endpoint cannot', async () => {
+    const { fetch } = stubFetch([teams, tasks])
+    const result = await createClickUpProvider(config, fetch).searchTargets('invoice')
+    expect(isOk(result) && result.value).toHaveLength(1)
+    expect(isOk(result) && result.value[0]?.key).toBe('abc2')
+  })
+
+  test('matches a task id as well as a name, so a pasted id still finds it', async () => {
+    const { fetch } = stubFetch([teams, tasks])
+    const result = await createClickUpProvider(config, fetch).searchTargets('ABC1')
+    expect(isOk(result) && result.value[0]?.key).toBe('abc1')
+  })
+
+  test('sends the personal token with no Bearer prefix, as everywhere else', async () => {
+    const { fetch, calls } = stubFetch([teams, tasks])
+    await createClickUpProvider(config, fetch).searchTargets('')
+    expect((calls[0]?.init.headers as Record<string, string>).Authorization).toBe(config.token)
+  })
+
+  test('explains a token that belongs to no workspace', async () => {
+    const { fetch } = stubFetch([{ json: { teams: [] } }])
+    const result = await createClickUpProvider(config, fetch).searchTargets('')
+    expect(isErr(result) && result.error.kind).toBe('not-found')
+    expect(isErr(result) && result.error.message).toContain('no workspace')
+  })
+
+  test('falls back to the id when a task has no name', async () => {
+    const { fetch } = stubFetch([teams, { json: { tasks: [{ id: 'bare' }] } }])
+    const result = await createClickUpProvider(config, fetch).searchTargets('')
+    expect(isOk(result) && result.value[0]).toEqual({
+      key: 'bare',
+      title: 'bare',
+      hint: 'bare',
+    })
+  })
+
+  test('reports a rejected token rather than an empty list', async () => {
+    const { fetch } = stubFetch([{ ok: false, status: 401 }])
+    const result = await createClickUpProvider(config, fetch).searchTargets('')
+    expect(isErr(result) && result.error.kind).toBe('auth')
+  })
+
+  test('never leaks the token into an error', async () => {
+    const { fetch } = stubFetch([{ ok: false, status: 500 }])
+    const result = await createClickUpProvider(config, fetch).searchTargets('')
+    expect(JSON.stringify(isErr(result) && result.error)).not.toContain(config.token)
+  })
+})

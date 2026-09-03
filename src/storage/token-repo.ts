@@ -1,9 +1,10 @@
 /**
  * Integration token storage (PRD FR-22).
  *
- * Tokens for all three services are UNSCOPED — they carry the full permissions
- * of the user's account (PRD R-4). That makes every rule here a security
- * requirement rather than a convenience:
+ * Every one of these tokens is UNSCOPED — each carries the full permissions of
+ * the user's account on that service (PRD R-4), and there are now eight of
+ * them. That makes every rule here a security requirement rather than a
+ * convenience, and it is the reason v2's OAuth matters:
  *
  *   - The storage area is injected, and callers must pass `chrome.storage.local`.
  *     `storage.sync` would replicate tokens to Google's servers, violating the
@@ -13,7 +14,15 @@
  *     leaves nothing behind that identifies the account.
  */
 
-export type ProviderId = 'jira' | 'notion' | 'clickup'
+export type ProviderId =
+  | 'jira'
+  | 'notion'
+  | 'clickup'
+  | 'slack'
+  | 'linear'
+  | 'trello'
+  | 'asana'
+  | 'dropbox'
 
 /** The subset of `chrome.storage.StorageArea` this repo needs. Injected for testability. */
 export interface StorageArea {

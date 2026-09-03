@@ -30,6 +30,29 @@ const identitySchema = z.object({
 
 const attachmentSchema = z.object({ id: z.string().min(1) })
 
+/**
+ * ClickUp's task list, per team (FR-41).
+ *
+ * Unlike Jira and Notion, ClickUp has no single search endpoint a personal
+ * token can hit — the discovery chain is teams → filtered tasks, which is the
+ * "3–4-call chain" the review flagged. It is worth the calls exactly once, for
+ * the picker, rather than asking a human to remember a numeric task id.
+ */
+const teamsSchema = z.object({
+  teams: z.array(z.object({ id: z.union([z.number(), z.string()]) })),
+})
+
+const tasksSchema = z.object({
+  tasks: z.array(
+    z.object({
+      id: z.string().min(1),
+      name: z.string().optional(),
+      status: z.object({ status: z.string().optional() }).nullish(),
+      list: z.object({ name: z.string().optional() }).nullish(),
+    }),
+  ),
+})
+
 const NETWORK_MESSAGE = 'Could not reach ClickUp. Check your connection and try again.'
 
 function messageFor(taskKey?: string): (status: number) => string {
@@ -61,6 +84,70 @@ export function createClickUpProvider(
   const headers = { Authorization: config.token, Accept: 'application/json' }
 
   return {
+    async searchTargets(query: string) {
+      const teamsResponse = await request(
+        fetchImpl,
+        `${BASE}/team`,
+        { headers },
+        messageFor(),
+        NETWORK_MESSAGE,
+      )
+      if (!teamsResponse.ok) return teamsResponse
+
+      const teams = teamsSchema.safeParse(await teamsResponse.value.json())
+      if (!teams.success) {
+        return err({
+          kind: 'schema',
+          message: 'ClickUp replied with an unrecognised list of teams.',
+        })
+      }
+      const team = teams.data.teams[0]
+      if (!team) {
+        return err({
+          kind: 'not-found',
+          message: 'This ClickUp token belongs to no workspace, so there are no tasks to list.',
+        })
+      }
+
+      // Assigned to me, most recently updated first: the same "what would I
+      // most likely want" answer Jira's picker gives for an empty query.
+      const response = await request(
+        fetchImpl,
+        `${BASE}/team/${team.id}/task?subtasks=true&include_closed=false&order_by=updated`,
+        { headers },
+        messageFor(),
+        NETWORK_MESSAGE,
+      )
+      if (!response.ok) return response
+
+      const parsed = tasksSchema.safeParse(await response.value.json())
+      if (!parsed.success) {
+        return err({
+          kind: 'schema',
+          message: 'ClickUp replied with an unrecognised list of tasks.',
+        })
+      }
+
+      // Filtered locally: the task endpoint has no text search, so narrowing
+      // by name here is the honest alternative to pretending it does.
+      const needle = query.trim().toLowerCase()
+      return ok(
+        parsed.data.tasks
+          .filter(
+            (task) =>
+              !needle ||
+              (task.name ?? '').toLowerCase().includes(needle) ||
+              task.id.toLowerCase().includes(needle),
+          )
+          .slice(0, 20)
+          .map((task) => ({
+            key: task.id,
+            title: task.name ?? task.id,
+            hint: [task.list?.name, task.status?.status].filter(Boolean).join(' · ') || task.id,
+          })),
+      )
+    },
+
     async testConnection(): Promise<Result<Identity, ProviderError>> {
       const response = await request(
         fetchImpl,

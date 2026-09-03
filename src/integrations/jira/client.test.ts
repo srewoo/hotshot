@@ -162,3 +162,110 @@ describe('attachImage', () => {
     expect(isErr(result) && result.error.kind).toBe('network')
   })
 })
+
+/**
+ * FR-41. Jira ships this feature server-side as `/issue/picker`, so the test
+ * is about using it correctly — and about the parts of the reply that vary by
+ * deployment not becoming a schema error over a convenience.
+ */
+describe('searchTargets', () => {
+  const picker = {
+    sections: [
+      {
+        id: 'cs',
+        issues: [
+          { key: 'ABC-1', summaryText: 'Login fails on Safari' },
+          { key: 'ABC-2', summaryText: 'Invoice table overflows' },
+        ],
+      },
+      { id: 'hs', issues: [{ key: 'ABC-9', summaryText: 'History match' }] },
+    ],
+  }
+
+  test('returns candidates with a human title', async () => {
+    const { fetch } = stubFetch([{ json: picker }])
+    const result = await createJiraProvider(config, fetch).searchTargets('login')
+    expect(isOk(result) && result.value).toEqual([
+      { key: 'ABC-1', title: 'Login fails on Safari', hint: 'ABC-1' },
+      { key: 'ABC-2', title: 'Invoice table overflows', hint: 'ABC-2' },
+      { key: 'ABC-9', title: 'History match', hint: 'ABC-9' },
+    ])
+  })
+
+  test('sends the query to the picker endpoint', async () => {
+    const { fetch, calls } = stubFetch([{ json: picker }])
+    await createJiraProvider(config, fetch).searchTargets('inv oice')
+    expect(calls[0]?.url).toContain('/issue/picker')
+    expect(calls[0]?.url).toContain('query=inv%20oice')
+  })
+
+  /**
+   * An empty query is "what would I most likely want": Jira answers with
+   * recently-viewed issues, which is why no `query` parameter is sent at all
+   * rather than an empty one.
+   */
+  test('omits the query entirely when nothing was typed', async () => {
+    const { fetch, calls } = stubFetch([{ json: picker }])
+    await createJiraProvider(config, fetch).searchTargets('   ')
+    expect(calls[0]?.url).not.toContain('query=')
+    expect(calls[0]?.url).toContain('currentJQL=')
+  })
+
+  test('authenticates the same way as every other call', async () => {
+    const { fetch, calls } = stubFetch([{ json: picker }])
+    await createJiraProvider(config, fetch).searchTargets('x')
+    const auth = (calls[0]?.init.headers as Record<string, string>).Authorization
+    expect(auth).toBe(`Basic ${btoa(`${config.email}:${config.token}`)}`)
+  })
+
+  /** Jira lists the same issue in "current search" and "history" sections. */
+  test('deduplicates an issue that appears in two sections', async () => {
+    const { fetch } = stubFetch([
+      {
+        json: {
+          sections: [
+            { issues: [{ key: 'ABC-1', summaryText: 'Once' }] },
+            { issues: [{ key: 'ABC-1', summaryText: 'Twice' }] },
+          ],
+        },
+      },
+    ])
+    const result = await createJiraProvider(config, fetch).searchTargets('')
+    expect(isOk(result) && result.value).toHaveLength(1)
+  })
+
+  test('accepts a reply with no sections as simply no suggestions', async () => {
+    const { fetch } = stubFetch([{ json: {} }])
+    const result = await createJiraProvider(config, fetch).searchTargets('nope')
+    expect(isOk(result) && result.value).toEqual([])
+  })
+
+  test('tolerates a section with no issues array', async () => {
+    const { fetch } = stubFetch([{ json: { sections: [{ id: 'empty' }] } }])
+    const result = await createJiraProvider(config, fetch).searchTargets('')
+    expect(isOk(result) && result.value).toEqual([])
+  })
+
+  test('falls back to the key when a suggestion has no summary', async () => {
+    const { fetch } = stubFetch([{ json: { sections: [{ issues: [{ key: 'ABC-7' }] }] } }])
+    const result = await createJiraProvider(config, fetch).searchTargets('')
+    expect(isOk(result) && result.value[0]).toEqual({
+      key: 'ABC-7',
+      title: 'ABC-7',
+      hint: 'ABC-7',
+    })
+  })
+
+  test('reports a rejected token in the same plain language as the rest', async () => {
+    const { fetch } = stubFetch([{ ok: false, status: 401 }])
+    const result = await createJiraProvider(config, fetch).searchTargets('x')
+    expect(isErr(result) && result.error.kind).toBe('auth')
+    expect(isErr(result) && result.error.message).toContain('API token')
+  })
+
+  test('never leaks the token into an error', async () => {
+    const { fetch } = stubFetch([{ ok: false, status: 500 }])
+    const result = await createJiraProvider(config, fetch).searchTargets('x')
+    expect(JSON.stringify(isErr(result) && result.error)).not.toContain(config.token)
+  })
+})

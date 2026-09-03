@@ -14,6 +14,28 @@
 /** Depth guard: deeply nested roots are real, infinite ones are a bug. */
 const MAX_DEPTH = 20
 
+/**
+ * The page element under the cursor, ignoring Hotshot's own overlay.
+ *
+ * `elementFromPoint` on our shadow root returns OUR surface, and
+ * `document.elementFromPoint` returns our host — both useless for picking a
+ * page element while the overlay is up. `elementsFromPoint` (plural) returns
+ * the whole stack, so the first entry outside our UI is the real target.
+ */
+export function pageElementFromPoint(
+  x: number,
+  y: number,
+  ownAttribute: string,
+): Element | null {
+  const stack = document.elementsFromPoint(x, y)
+  for (const element of stack) {
+    if (element.closest(`[${ownAttribute}]`)) continue
+    // Then pierce the page's own components, which retarget to their host.
+    return element.shadowRoot ? deepElementFromPoint(x, y, element.shadowRoot) : element
+  }
+  return null
+}
+
 export function deepElementFromPoint(
   x: number,
   y: number,
